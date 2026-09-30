@@ -364,6 +364,44 @@ Live-tier помечен `@Tag("live")` и по умолчанию пропус�
 - `-o <file>` → отчёт в файле, stdout пуст.
 - неизвестный `--format` → exit `3`.
 
+### UI-скриншот тесты (Playwright)
+
+Визуальная регрессия web UI. `e2e/ui.spec.ts` проходит сценарий демо: репо добавляются
+через Enter и **Add**, дубль и неразбираемая строка отклоняются, `×` убирает чип, дальше
+**Scan**, фильтр, «Possibly similar» и шаринг-ссылка. Ключевые кадры (`01-empty` …
+`09-shared-link`) сравниваются через `toHaveScreenshot` с эталонами в
+`e2e/__screenshots__/<platform>/`.
+
+- UI отдаёт настоящий `serve` из `build/libs/skill-atlas.jar` на порту `18765` (порт должен
+  быть свободен, после правок `index.html` jar пересобирается). Замокан только
+  `/api/multi-scan` — фикстурой `e2e/fixtures/multi-scan.json`, так что ни сеть, ни токен
+  не нужны. Заодно проверяется, что скан — один запрос со всеми `repo` в порядке добавления.
+- Браузер локально — установленный Google Chrome (`channel: 'chrome'`, другой канал — через
+  `PW_CHANNEL`); свои браузеры Playwright не скачивает. При заданном `CI` — Chromium из
+  образа Playwright.
+- Эталоны зависят от ОС (шрифты) и версии браузера, поэтому хранятся по платформам:
+  `darwin` — для локального прогона на Mac, `linux` — для CI.
+- В `./gradlew build` не входят. В CI — отдельный workflow `UI screenshots`
+  (`.github/workflows/ui-screenshots.yml`, на PR и push в `main`): гоняется в образе
+  `mcr.microsoft.com/playwright:v<версия @playwright/test>-noble`, сверяет кадры с
+  эталонами `linux`. При расхождении в summary джобы — список кадров и ссылки на артефакты:
+  `ui-screenshots-report` (HTML-отчёт с expected / actual / diff) и `ui-screenshots-linux`
+  (все кадры в текущем виде).
+- Эталоны `linux` снимаются только в CI (Chromium в amd64-эмуляции Docker на Apple Silicon
+  падает). Если изменение UI ожидаемое — `e2e/pull-ci-baselines.sh [<run-id>]` забирает кадры
+  из упавшего прогона в `e2e/__screenshots__/linux/`; дальше просмотр и коммит.
+- Версия `@playwright/test` в `e2e/package.json` и тег образа в workflow меняются вместе.
+
+```bash
+./gradlew shadowJar && cd e2e && npm ci && npm test   # сверка с эталонами
+npm run test:update                                   # перегенерировать эталоны
+npx playwright show-report                            # диффы упавших кадров
+./pull-ci-baselines.sh                                # эталоны linux из последнего прогона CI ветки
+```
+
+После `test:update` изменённые PNG просматриваются до коммита: коммитятся только ожидаемые
+изменения.
+
 ## Definition of Done
 
 Изменение готово, когда выполнены **все** пункты. Порядок важен: спека → красный тест →
