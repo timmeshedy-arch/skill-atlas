@@ -65,6 +65,7 @@
   input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(35, 131, 226, .15); }
   #repo { flex: 1 1 320px; min-width: 0; }
   #ref { flex: 0 1 140px; min-width: 0; }
+  #filter { display: block; width: 100%; margin-top: 24px; }
   button {
     font: inherit;
     font-weight: 500;
@@ -182,6 +183,7 @@
   </form>
 
   <div id="status" class="callout" hidden></div>
+  <input id="filter" type="search" placeholder="Filter by name" aria-label="Filter by name" autocomplete="off" hidden>
   <section id="result" hidden></section>
 </main>
 
@@ -189,6 +191,8 @@
   const $ = (id) => document.getElementById(id);
   const form = $("form"), repoInput = $("repo"), refInput = $("ref");
   const button = $("scan"), statusBox = $("status"), result = $("result");
+  const filterInput = $("filter");
+  let lastData = null, groupsBox = null;
 
   const GROUPS = [
     { type: "SKILL", title: "Skills" },
@@ -227,6 +231,36 @@
     );
   }
 
+  // Case-insensitive substring match on name; commands are compared without the leading "/".
+  function matches(a, q) {
+    if (!q) return true;
+    if (!a.name) return false;
+    const name = a.type === "COMMAND" ? a.name.replace(/^\//, "") : a.name;
+    return name.toLowerCase().includes(q.replace(/^\//, "").toLowerCase());
+  }
+
+  function renderGroups() {
+    const q = filterInput.value.trim();
+    const nodes = [];
+    for (const g of GROUPS) {
+      const all = lastData.artifacts.filter((a) => a.type === g.type);
+      const items = all.filter((a) => matches(a, q));
+      const count = q ? `${items.length} / ${all.length}` : all.length;
+      nodes.push(el("h2", {}, g.title, el("span", { className: "count", textContent: count })));
+      nodes.push(items.length
+        ? el("ul", {}, ...items.map(renderArtifact))
+        : el("div", { className: "empty", textContent: all.length ? "No matches." : `No ${g.title.toLowerCase()} found.` }));
+    }
+    groupsBox.replaceChildren(...nodes);
+  }
+
+  function syncFilterToUrl() {
+    const params = new URLSearchParams(location.search);
+    const q = filterInput.value.trim();
+    if (q) params.set("q", q); else params.delete("q");
+    history.replaceState(null, "", "?" + params);
+  }
+
   function render(data) {
     const base = `https://github.com/${data.owner}/${data.repo}`;
     const total = data.artifacts.length;
@@ -241,13 +275,10 @@
       ),
     ];
 
-    for (const g of GROUPS) {
-      const items = data.artifacts.filter((a) => a.type === g.type);
-      nodes.push(el("h2", {}, g.title, el("span", { className: "count", textContent: items.length })));
-      nodes.push(items.length
-        ? el("ul", {}, ...items.map(renderArtifact))
-        : el("div", { className: "empty", textContent: `No ${g.title.toLowerCase()} found.` }));
-    }
+    lastData = data;
+    groupsBox = el("div");
+    nodes.push(groupsBox);
+    renderGroups();
 
     if (data.similar && data.similar.length) {
       const byPath = new Map(data.artifacts.map((a) => [a.path, a]));
@@ -266,6 +297,7 @@
 
     result.replaceChildren(...nodes);
     result.hidden = false;
+    filterInput.hidden = false;
 
     if (data.truncated) {
       showStatus("warn", "⚠️", el("span", { textContent: "GitHub truncated the file tree — results may be incomplete for very large repositories." }));
@@ -282,6 +314,7 @@
     const params = new URLSearchParams({ repo });
     if (ref) params.set("ref", ref);
     history.replaceState(null, "", "?" + params);
+    syncFilterToUrl();
     try { localStorage.setItem("skill-atlas:last", JSON.stringify({ repo, ref })); } catch {}
 
     try {
@@ -302,8 +335,14 @@
     if (repo) scan(repo, refInput.value.trim());
   });
 
-  // Prefill from ?repo=&ref= (shareable link) or the last scan.
+  filterInput.addEventListener("input", () => {
+    syncFilterToUrl();
+    if (lastData) renderGroups();
+  });
+
+  // Prefill from ?repo=&ref=&q= (shareable link) or the last scan.
   const qs = new URLSearchParams(location.search);
+  filterInput.value = qs.get("q") || "";
   if (qs.get("repo")) {
     repoInput.value = qs.get("repo");
     refInput.value = qs.get("ref") || "";
