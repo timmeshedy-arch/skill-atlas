@@ -27,15 +27,23 @@ object SimilarityDetector {
         "skill", "skills", "command", "commands", "claude",
     )
 
-    private class Tokens(val artifact: Artifact, val name: Set<String>, val description: Set<String>)
+    private class Tokens<T>(val item: T, val name: Set<String>, val description: Set<String>)
 
-    fun findGroups(artifacts: List<Artifact>): List<SimilarGroup> {
-        val items = artifacts
-            .filter { it.valid && !it.name.isNullOrBlank() }
-            .sortedBy { it.path }
-            .map { Tokens(it, tokenize(it.name), tokenize(it.description)) }
+    fun findGroups(artifacts: List<Artifact>): List<SimilarGroup> =
+        findGroups(artifacts, key = { it.path }, artifact = { it })
+            .map { (members, score) -> SimilarGroup(paths = members.map { it.path }, score = score) }
 
-        val parent = IntArray(items.size) { it }
+    /**
+     * То же для произвольных элементов — например, артефактов нескольких репозиториев.
+     * [key] задаёт стабильный порядок (у одного репо — путь), [artifact] — что сравнивать.
+     */
+    fun <T> findGroups(items: List<T>, key: (T) -> String, artifact: (T) -> Artifact): List<Pair<List<T>, Double>> {
+        val tokens = items
+            .filter { artifact(it).let { a -> a.valid && !a.name.isNullOrBlank() } }
+            .sortedBy(key)
+            .map { Tokens(it, tokenize(artifact(it).name), tokenize(artifact(it).description)) }
+
+        val parent = IntArray(tokens.size) { it }
         fun root(i: Int): Int {
             var r = i
             while (parent[r] != r) r = parent[r]
@@ -43,9 +51,9 @@ object SimilarityDetector {
         }
 
         val pairScores = mutableListOf<Triple<Int, Int, Double>>()
-        for (i in items.indices) {
-            for (j in i + 1 until items.size) {
-                val score = score(items[i], items[j])
+        for (i in tokens.indices) {
+            for (j in i + 1 until tokens.size) {
+                val score = score(tokens[i], tokens[j])
                 if (score >= SIMILARITY_THRESHOLD) {
                     pairScores += Triple(i, j, score)
                     parent[root(j)] = root(i)
@@ -57,19 +65,16 @@ object SimilarityDetector {
             .groupBy({ root(it.first) }, { it.third })
             .mapValues { (_, scores) -> scores.max() }
 
-        // items отсортированы по пути, поэтому и группы, и участники в них идут по пути.
-        return items.indices
+        // tokens отсортированы по key, поэтому и группы, и участники в них идут по key.
+        return tokens.indices
             .groupBy { root(it) }
             .filterKeys { it in bestScore }
-            .map { (key, members) ->
-                SimilarGroup(
-                    paths = members.map { items[it].artifact.path },
-                    score = (bestScore.getValue(key) * 100).roundToInt() / 100.0,
-                )
+            .map { (root, members) ->
+                members.map { tokens[it].item } to (bestScore.getValue(root) * 100).roundToInt() / 100.0
             }
     }
 
-    private fun score(a: Tokens, b: Tokens): Double =
+    private fun score(a: Tokens<*>, b: Tokens<*>): Double =
         NAME_WEIGHT * jaccard(a.name, b.name) + (1 - NAME_WEIGHT) * jaccard(a.description, b.description)
 
     private fun jaccard(a: Set<String>, b: Set<String>): Double {

@@ -64,7 +64,6 @@
   input::placeholder { color: var(--faint); }
   input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(35, 131, 226, .15); }
   #repo { flex: 1 1 320px; min-width: 0; }
-  #ref { flex: 0 1 140px; min-width: 0; }
   #filter { display: block; width: 100%; margin-top: 24px; }
   button {
     font: inherit;
@@ -79,6 +78,23 @@
   }
   button:hover { background: var(--accent-hover); }
   button:disabled { opacity: .6; cursor: default; }
+  button.secondary { color: var(--text); background: var(--hover); border: 1px solid var(--border); }
+  button.secondary:hover { background: var(--border); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 13px;
+    padding: 2px 4px 2px 8px;
+    border-radius: 4px;
+    background: var(--code-bg);
+  }
+  .chip button {
+    color: var(--muted); background: none;
+    padding: 0 4px; font-size: 14px; line-height: 1;
+  }
+  .chip button:hover { color: var(--text); background: none; }
+  .hint { color: var(--faint); font-size: 13px; margin-top: 6px; min-height: 1.5em; }
 
   .callout {
     display: flex; gap: 10px;
@@ -96,8 +112,9 @@
     border-bottom: 1px solid var(--border);
     color: var(--muted);
     font-size: 14px;
-    display: flex; flex-wrap: wrap; gap: 4px 12px;
   }
+  .meta .line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+  .repo-label { font-size: 12px; color: var(--muted); }
   .meta a { color: inherit; }
   code {
     font: 85% ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -174,13 +191,15 @@
 <main>
   <div class="icon">🗺️</div>
   <h1>Skill Atlas</h1>
-  <p class="subtitle">Claude Code skills and slash commands defined in a GitHub repository.</p>
+  <p class="subtitle">Claude Code skills and slash commands defined in GitHub repositories.</p>
 
   <form id="form" autocomplete="off">
-    <input id="repo" name="repo" placeholder="owner/repo or https://github.com/owner/repo" required autofocus>
-    <input id="ref" name="ref" placeholder="branch / tag / sha">
+    <input id="repo" name="repo" placeholder="owner/repo or https://github.com/owner/repo" autofocus>
+    <button id="add" type="button" class="secondary">Add</button>
     <button id="scan" type="submit">Scan</button>
   </form>
+  <div id="chips" class="chips"></div>
+  <div id="hint" class="hint"></div>
 
   <div id="status" class="callout" hidden></div>
   <input id="filter" type="search" placeholder="Filter by name" aria-label="Filter by name" autocomplete="off" hidden>
@@ -189,10 +208,11 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const form = $("form"), repoInput = $("repo"), refInput = $("ref");
+  const form = $("form"), repoInput = $("repo"), addButton = $("add");
   const button = $("scan"), statusBox = $("status"), result = $("result");
-  const filterInput = $("filter");
-  let lastData = null, groupsBox = null;
+  const filterInput = $("filter"), chipsBox = $("chips"), hint = $("hint");
+  const MAX_REPOS = 10;
+  let repos = [], scanning = false, lastData = null, groupsBox = null;
 
   const GROUPS = [
     { type: "SKILL", title: "Skills" },
@@ -212,6 +232,49 @@
     statusBox.hidden = false;
   }
 
+  // Same forms as the CLI <repo> argument (see RepoArg.kt); returns "owner/repo" or null.
+  function parseRepo(input) {
+    const s = input.trim().replace(/\.git$/, "").replace(/\/$/, "")
+      .replace(/^(https?:\/\/|git@)/, "").replace(/^github\.com[\/:]/, "");
+    const parts = s.split("/").filter((p) => p.trim());
+    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : null;
+  }
+
+  function renderChips() {
+    chipsBox.replaceChildren(...repos.map((r) => el("span", { className: "chip" },
+      r,
+      el("button", { type: "button", title: `Remove ${r}`, textContent: "×", onclick: () => removeRepo(r) }),
+    )));
+    button.disabled = scanning || (!repos.length && !repoInput.value.trim());
+  }
+
+  // Adds the input value to the list; returns false (with a hint) if it can't be added.
+  function addRepo(input) {
+    const repo = parseRepo(input);
+    if (!repo) { hint.textContent = `Can't parse "${input.trim()}" as owner/repo.`; return false; }
+    if (repos.some((r) => r.toLowerCase() === repo.toLowerCase())) { hint.textContent = `${repo} is already added.`; return false; }
+    if (repos.length >= MAX_REPOS) { hint.textContent = `At most ${MAX_REPOS} repositories.`; return false; }
+    repos.push(repo);
+    hint.textContent = "";
+    renderChips();
+    return true;
+  }
+
+  function removeRepo(repo) {
+    repos = repos.filter((r) => r !== repo);
+    hint.textContent = "";
+    renderChips();
+  }
+
+  function addFromInput() {
+    const value = repoInput.value.trim();
+    if (value && addRepo(value)) repoInput.value = "";
+    renderChips();
+    repoInput.focus();
+  }
+
+  const artifactKey = (x) => `${x.owner}/${x.repo}/${x.path}`;
+
   function renderArtifact(a) {
     const name = a.name
       ? el("span", { className: "name", textContent: a.name })
@@ -220,7 +283,7 @@
       ? el("span", { className: "tag ok", textContent: "valid" })
       : el("span", { className: "tag bad", textContent: a.error || "invalid" });
     return el("li", {},
-      el("div", { className: "row" }, name, tag),
+      el("div", { className: "row" }, name, tag, el("span", { className: "repo-label", textContent: `${a.owner}/${a.repo}` })),
       a.description ? el("p", {
         className: "desc",
         textContent: a.description,
@@ -261,17 +324,29 @@
     history.replaceState(null, "", "?" + params);
   }
 
+  function renderRepoLine(r) {
+    const name = `${r.owner}/${r.repo}`;
+    if (r.error) {
+      return el("div", { className: "line" },
+        el("span", { textContent: name }),
+        el("span", { className: "tag bad", textContent: r.error }),
+      );
+    }
+    return el("div", { className: "line" },
+      el("a", { href: `https://github.com/${name}/tree/${r.sha}`, target: "_blank", rel: "noopener", textContent: name }),
+      el("span", {}, "@ ", el("code", { textContent: r.ref })),
+      el("span", { textContent: r.sha.slice(0, 7) }),
+    );
+  }
+
   function render(data) {
-    const base = `https://github.com/${data.owner}/${data.repo}`;
     const total = data.artifacts.length;
     const valid = data.artifacts.filter((a) => a.valid).length;
 
     const nodes = [
       el("div", { className: "meta" },
-        el("a", { href: `${base}/tree/${data.sha}`, target: "_blank", rel: "noopener", textContent: `${data.owner}/${data.repo}` }),
-        el("span", {}, "@ ", el("code", { textContent: data.ref })),
-        el("span", { textContent: data.sha.slice(0, 7) }),
-        el("span", { textContent: `${total} found · ${valid} valid · ${total - valid} invalid` }),
+        ...data.repos.map(renderRepoLine),
+        el("div", { className: "line", textContent: `${total} found · ${valid} valid · ${total - valid} invalid` }),
       ),
     ];
 
@@ -281,15 +356,16 @@
     renderGroups();
 
     if (data.similar && data.similar.length) {
-      const byPath = new Map(data.artifacts.map((a) => [a.path, a]));
+      const byKey = new Map(data.artifacts.map((a) => [artifactKey(a), a]));
       nodes.push(el("h2", {}, "Possibly similar", el("span", { className: "count", textContent: data.similar.length })));
       nodes.push(el("ul", { className: "similar" }, ...data.similar.map((g) => el("li", {},
         el("div", { className: "row" }, el("span", { className: "tag warn", textContent: `≈ ${g.score.toFixed(2)}` })),
-        ...g.paths.map((p) => {
-          const a = byPath.get(p);
+        ...g.members.map((m) => {
+          const a = byKey.get(artifactKey(m));
           return el("div", { className: "member" },
             el("span", { className: "name", textContent: a.name }),
-            el("a", { className: "path", href: a.url, target: "_blank", rel: "noopener", textContent: p }),
+            el("span", { className: "repo-label", textContent: `${m.owner}/${m.repo}` }),
+            el("a", { className: "path", href: a.url, target: "_blank", rel: "noopener", textContent: m.path }),
           );
         }),
       ))));
@@ -299,60 +375,75 @@
     result.hidden = false;
     filterInput.hidden = false;
 
-    if (data.truncated) {
-      showStatus("warn", "⚠️", el("span", { textContent: "GitHub truncated the file tree — results may be incomplete for very large repositories." }));
+    const truncated = data.repos.filter((r) => r.truncated).map((r) => `${r.owner}/${r.repo}`);
+    if (truncated.length) {
+      showStatus("warn", "⚠️", el("span", { textContent: `GitHub truncated the file tree of ${truncated.join(", ")} — results may be incomplete.` }));
     } else {
       statusBox.hidden = true;
     }
   }
 
-  async function scan(repo, ref) {
-    button.disabled = true;
+  async function scan() {
+    scanning = true;
+    button.disabled = addButton.disabled = true;
     result.hidden = true;
-    showStatus("", el("div", { className: "spinner" }), el("span", { textContent: `Scanning ${repo}…` }));
+    const label = repos.length === 1 ? repos[0] : `${repos.length} repositories`;
+    showStatus("", el("div", { className: "spinner" }), el("span", { textContent: `Scanning ${label}…` }));
 
-    const params = new URLSearchParams({ repo });
-    if (ref) params.set("ref", ref);
+    const params = new URLSearchParams(repos.map((r) => ["repo", r]));
     history.replaceState(null, "", "?" + params);
     syncFilterToUrl();
-    try { localStorage.setItem("skill-atlas:last", JSON.stringify({ repo, ref })); } catch {}
+    try { localStorage.setItem("skill-atlas:last", JSON.stringify({ repos })); } catch {}
 
     try {
-      const res = await fetch("api/scan?" + params);
+      const res = await fetch("api/multi-scan?" + params);
       const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
       render(body);
     } catch (e) {
       showStatus("error", "⛔", el("span", { textContent: e.message }));
     } finally {
-      button.disabled = false;
+      scanning = false;
+      addButton.disabled = false;
+      renderChips();
     }
   }
 
+  // Enter with text in the field adds it; Enter on an empty field submits the form (scan).
+  repoInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && repoInput.value.trim()) { e.preventDefault(); addFromInput(); }
+  });
+  // Scan: text left in the field is added to the list first.
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    const repo = repoInput.value.trim();
-    if (repo) scan(repo, refInput.value.trim());
+    const value = repoInput.value.trim();
+    if (value && !addRepo(value)) return;
+    repoInput.value = "";
+    renderChips();
+    if (repos.length) scan();
   });
+  addButton.addEventListener("click", addFromInput);
+  repoInput.addEventListener("input", renderChips);
 
   filterInput.addEventListener("input", () => {
     syncFilterToUrl();
     if (lastData) renderGroups();
   });
 
-  // Prefill from ?repo=&ref=&q= (shareable link) or the last scan.
+  // Prefill from ?repo=a&repo=b&q= (shareable link) or the last scan.
   const qs = new URLSearchParams(location.search);
   filterInput.value = qs.get("q") || "";
-  if (qs.get("repo")) {
-    repoInput.value = qs.get("repo");
-    refInput.value = qs.get("ref") || "";
-    scan(repoInput.value, refInput.value);
+  if (qs.getAll("repo").length) {
+    qs.getAll("repo").forEach(addRepo);
+    if (repos.length) scan();
   } else {
     try {
       const last = JSON.parse(localStorage.getItem("skill-atlas:last") || "null");
-      if (last) { repoInput.value = last.repo || ""; refInput.value = last.ref || ""; }
+      // Before multi-repo the last scan was stored as { repo, ref }.
+      (last?.repos || (last?.repo ? [last.repo] : [])).forEach(addRepo);
     } catch {}
   }
+  renderChips();
 </script>
 </body>
 </html>
