@@ -80,9 +80,13 @@ object ReportFormatter {
         return sb.toString().trimEnd()
     }
 
-    private fun json(result: ScanResult): String {
+    private fun json(result: ScanResult): String =
+        Json { prettyPrint = true }.encodeToString(JsonObject.serializer(), toJson(result))
+
+    /** Структура `--format json`; её же отдаёт `/api/scan` веб-UI. */
+    fun toJson(result: ScanResult): JsonObject {
         val artifactsArray = JsonArray(result.artifacts.map { artifact -> artifactToJson(artifact) })
-        val root = buildJsonObject {
+        return buildJsonObject {
             put("owner", result.owner)
             put("repo", result.repo)
             put("ref", result.ref)
@@ -90,7 +94,6 @@ object ReportFormatter {
             put("truncated", result.truncated)
             put("artifacts", artifactsArray)
         }
-        return Json { prettyPrint = true }.encodeToString(JsonObject.serializer(), root)
     }
 
     private fun artifactToJson(artifact: Artifact): JsonObject = buildJsonObject {

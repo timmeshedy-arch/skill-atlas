@@ -6,6 +6,7 @@ import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.clikt.parameters.types.int
 import com.skillatlas.github.DEFAULT_API_BASE
 import com.skillatlas.github.DEFAULT_RAW_BASE
 import com.skillatlas.github.GitHubClient
@@ -13,6 +14,7 @@ import com.skillatlas.github.GitHubException
 import com.skillatlas.report.ReportFormat
 import com.skillatlas.report.ReportFormatter
 import com.skillatlas.scan.Scanner
+import com.skillatlas.web.WebServer
 import java.io.File
 import kotlin.system.exitProcess
 
@@ -88,15 +90,6 @@ class ScanApp(
         }
         return EXIT_OK
     }
-
-    private fun parseRepo(input: String): Pair<String, String>? {
-        val cleaned = input.trim().removeSuffix(".git").removeSuffix("/")
-        val withoutScheme = cleaned.removePrefix("https://").removePrefix("http://").removePrefix("git@")
-        val withoutHost = withoutScheme.removePrefix("github.com/").removePrefix("github.com:")
-        val parts = withoutHost.split("/").filter { it.isNotBlank() }
-        if (parts.size < 2) return null
-        return parts[0] to parts[1]
-    }
 }
 
 class SkillAtlas : CliktCommand(name = "skill-atlas") {
@@ -140,6 +133,24 @@ class ScanCommand : CliktCommand(
     }
 }
 
+class ServeCommand : CliktCommand(
+    name = "serve",
+    help = "Start a local web UI for scanning repositories",
+) {
+
+    private val port by option("--port", help = "Port to listen on (127.0.0.1 only)").int().default(8080)
+
+    private val token by option("--token", help = "GitHub token (defaults to the GITHUB_TOKEN env var)")
+        .default("")
+
+    override fun run() {
+        val server = WebServer(port = port, token = token.ifBlank { System.getenv("GITHUB_TOKEN") })
+        server.start()
+        echo("skill-atlas UI: http://127.0.0.1:${server.port}")
+        Thread.currentThread().join()
+    }
+}
+
 fun main(args: Array<String>) {
-    SkillAtlas().subcommands(ScanCommand()).main(args)
+    SkillAtlas().subcommands(ScanCommand(), ServeCommand()).main(args)
 }
