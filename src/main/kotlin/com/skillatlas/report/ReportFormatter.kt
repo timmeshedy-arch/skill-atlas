@@ -3,11 +3,14 @@ package com.skillatlas.report
 import com.skillatlas.scan.Artifact
 import com.skillatlas.scan.ArtifactType
 import com.skillatlas.scan.ScanResult
+import com.skillatlas.scan.SimilarGroup
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.util.Locale
 
 enum class ReportFormat { TABLE, JSON, MD }
 
@@ -44,11 +47,25 @@ object ReportFormatter {
             sb.appendLine()
         }
 
+        if (result.similar.isNotEmpty()) {
+            val byPath = result.artifacts.associateBy { it.path }
+            sb.appendLine("SIMILAR (${result.similar.size})")
+            for (group in result.similar) {
+                sb.appendLine("  ≈ score ${score(group)}")
+                for (path in group.paths) {
+                    sb.appendLine("    ${byPath.getValue(path).name} — $path")
+                }
+            }
+            sb.appendLine()
+        }
+
         val total = result.artifacts.size
         val valid = result.artifacts.count { it.valid }
         sb.appendLine("Total: $total artifacts found, $valid valid, ${total - valid} invalid")
         return sb.toString().trimEnd()
     }
+
+    private fun score(group: SimilarGroup) = String.format(Locale.ROOT, "%.2f", group.score)
 
     private fun truncate(text: String) =
         if (text.length <= TABLE_DESCRIPTION_LIMIT) text else text.take(TABLE_DESCRIPTION_LIMIT) + "…"
@@ -74,6 +91,19 @@ object ReportFormatter {
             }
             sb.appendLine()
         }
+        if (result.similar.isNotEmpty()) {
+            val byPath = result.artifacts.associateBy { it.path }
+            sb.appendLine("## SIMILAR (${result.similar.size})")
+            sb.appendLine()
+            for (group in result.similar) {
+                sb.appendLine("- ≈ score ${score(group)}")
+                for (path in group.paths) {
+                    val artifact = byPath.getValue(path)
+                    sb.appendLine("  - [**${artifact.name}**](${artifact.url}) — `$path`")
+                }
+            }
+            sb.appendLine()
+        }
         val total = result.artifacts.size
         val valid = result.artifacts.count { it.valid }
         sb.appendLine("**Total:** $total artifacts, $valid valid, ${total - valid} invalid")
@@ -93,7 +123,13 @@ object ReportFormatter {
             put("sha", result.sha)
             put("truncated", result.truncated)
             put("artifacts", artifactsArray)
+            put("similar", JsonArray(result.similar.map { group -> similarToJson(group) }))
         }
+    }
+
+    private fun similarToJson(group: SimilarGroup): JsonObject = buildJsonObject {
+        put("score", group.score)
+        put("paths", JsonArray(group.paths.map { JsonPrimitive(it) }))
     }
 
     private fun artifactToJson(artifact: Artifact): JsonObject = buildJsonObject {

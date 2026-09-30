@@ -109,6 +109,7 @@ class WebServerIntegrationTest {
             artifact["url"]!!.jsonPrimitive.content,
         )
         assertTrue(artifact["valid"]!!.jsonPrimitive.boolean)
+        assertEquals(0, body["similar"]!!.jsonArray.size)
     }
 
     @Test

@@ -136,6 +136,7 @@
   }
   .tag.ok { background: var(--ok-bg); color: var(--ok-fg); }
   .tag.bad { background: var(--bad-bg); color: var(--bad-fg); }
+  .tag.warn { background: var(--warn-bg); color: var(--warn-fg); }
   .desc {
     margin: 2px 0 0;
     display: -webkit-box;
@@ -155,6 +156,8 @@
   }
   .path:hover { color: var(--text); text-decoration: underline; }
   .empty { color: var(--faint); padding: 8px 0; font-size: 14px; }
+  .similar .member { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+  .similar .member .path { margin-top: 0; }
 
   .spinner {
     width: 14px; height: 14px;
@@ -276,6 +279,21 @@
     groupsBox = el("div");
     nodes.push(groupsBox);
     renderGroups();
+
+    if (data.similar && data.similar.length) {
+      const byPath = new Map(data.artifacts.map((a) => [a.path, a]));
+      nodes.push(el("h2", {}, "Possibly similar", el("span", { className: "count", textContent: data.similar.length })));
+      nodes.push(el("ul", { className: "similar" }, ...data.similar.map((g) => el("li", {},
+        el("div", { className: "row" }, el("span", { className: "tag warn", textContent: `≈ ${g.score.toFixed(2)}` })),
+        ...g.paths.map((p) => {
+          const a = byPath.get(p);
+          return el("div", { className: "member" },
+            el("span", { className: "name", textContent: a.name }),
+            el("a", { className: "path", href: a.url, target: "_blank", rel: "noopener", textContent: p }),
+          );
+        }),
+      ))));
+    }
 
     result.replaceChildren(...nodes);
     result.hidden = false;
