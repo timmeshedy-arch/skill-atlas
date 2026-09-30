@@ -16,12 +16,14 @@ class Scanner(private val client: GitHubClient) {
             ArtifactParser.parse(candidate, content, url)
         }
 
+        val checked = markDuplicates(artifacts)
         return ScanResult(
             owner = owner,
             repo = repo,
             ref = resolvedRef,
             sha = tree.sha,
-            artifacts = markDuplicates(artifacts),
+            artifacts = checked,
+            similar = SimilarityDetector.findGroups(checked),
             truncated = tree.truncated,
         )
     }

@@ -1,7 +1,10 @@
 package com.skillatlas
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -135,6 +138,185 @@ class ScanIntegrationTest {
         val described = Json.parseToJsonElement(jsonOut.toString())
             .jsonObject["artifacts"]!!.jsonArray[0].jsonObject["description"]!!.jsonPrimitive.content
         assertEquals(long, described)
+    }
+
+    // --- похожие артефакты ---
+
+    @Test
+    fun `similar skills are grouped in a SIMILAR section and stay valid`() {
+        givenRepo(
+            SKILL_CODE_REVIEW to skill("code-review", "Review a pull request for bugs and style issues."),
+            SKILL_PR_REVIEW to skill("pr-review", "Review the pull request for bugs, style and security issues."),
+        )
+
+        val code = app().run("$OWNER/$REPO")
+
+        assertEquals(EXIT_OK, code)
+        assertEquals(
+            listOf(
+                "skill-atlas scan report — $OWNER/$REPO @ $MAIN (sha: 8a1541c)",
+                "",
+                "SKILLS (2)",
+                "  ✔ code-review — valid",
+                "    ${permalink(SKILL_CODE_REVIEW)}",
+                "    Review a pull request for bugs and style issues.",
+                "  ✔ pr-review — valid",
+                "    ${permalink(SKILL_PR_REVIEW)}",
+                "    Review the pull request for bugs, style and security issues.",
+                "",
+                "COMMANDS (0)",
+                "",
+                "SIMILAR (1)",
+                "  ≈ score 0.54",
+                "    code-review — $SKILL_CODE_REVIEW",
+                "    pr-review — $SKILL_PR_REVIEW",
+                "",
+                "Total: 2 artifacts found, 2 valid, 0 invalid",
+            ).joinToString("\n"),
+            out.toString().trimEnd('\n'),
+        )
+    }
+
+    @Test
+    fun `similar skill and command are grouped across types in md`() {
+        val command = ".claude/commands/draft-notes.md"
+        givenRepo(
+            SKILL_RELEASE_NOTES to skill("release-notes", "Draft release notes from merged pull requests."),
+            command to "---\nname: /draft-notes\ndescription: Draft release notes from the merged pull requests.\n---\n",
+        )
+
+        app().run("$OWNER/$REPO", format = "md")
+
+        assertEquals(
+            listOf(
+                "# skill-atlas report: $OWNER/$REPO @ $MAIN",
+                "",
+                "## SKILL (1)",
+                "",
+                "- ✅ [**release-notes**](${permalink(SKILL_RELEASE_NOTES)}) — valid",
+                "  Draft release notes from merged pull requests.",
+                "",
+                "## COMMAND (1)",
+                "",
+                "- ✅ [**/draft-notes**](${permalink(command)}) — valid",
+                "  Draft release notes from the merged pull requests.",
+                "",
+                "## SIMILAR (1)",
+                "",
+                "- ≈ score 0.60",
+                "  - [**/draft-notes**](${permalink(command)}) — `$command`",
+                "  - [**release-notes**](${permalink(SKILL_RELEASE_NOTES)}) — `$SKILL_RELEASE_NOTES`",
+                "",
+                "**Total:** 2 artifacts, 2 valid, 0 invalid",
+            ).joinToString("\n"),
+            out.toString().trimEnd('\n'),
+        )
+    }
+
+    @Test
+    fun `artifacts sharing a single name word are not similar`() {
+        val checklist = ".claude/skills/release-checklist/SKILL.md"
+        givenRepo(
+            SKILL_RELEASE_NOTES to skill("release-notes", "Draft release notes from merged pull requests."),
+            checklist to skill("release-checklist", "Checklist for cutting a release branch: version bump, changelog, tagging."),
+            ".claude/commands/fmt.md" to "Run ktlint over the changed files.\n",
+        )
+
+        app().run("$OWNER/$REPO")
+
+        assertEquals(
+            listOf(
+                "skill-atlas scan report — $OWNER/$REPO @ $MAIN (sha: 8a1541c)",
+                "",
+                "SKILLS (2)",
+                "  ✔ release-notes — valid",
+                "    ${permalink(SKILL_RELEASE_NOTES)}",
+                "    Draft release notes from merged pull requests.",
+                "  ✔ release-checklist — valid",
+                "    ${permalink(checklist)}",
+                "    Checklist for cutting a release branch: version bump, changelog, tagging.",
+                "",
+                "COMMANDS (1)",
+                "  ✔ /fmt — valid",
+                "    ${permalink(".claude/commands/fmt.md")}",
+                "",
+                "Total: 3 artifacts found, 3 valid, 0 invalid",
+            ).joinToString("\n"),
+            out.toString().trimEnd('\n'),
+        )
+    }
+
+    @Test
+    fun `similarity is transitive and members are sorted by path`() {
+        val kotlinLint = ".claude/skills/kotlin-lint/SKILL.md"
+        val kotlinFormat = ".claude/skills/kotlin-format/SKILL.md"
+        val javaFormat = ".agents/skills/java-format/SKILL.md"
+        givenRepo(
+            kotlinLint to skill("kotlin-lint", "Lint Kotlin sources with ktlint."),
+            kotlinFormat to skill("kotlin-format", "Format Kotlin sources with ktlint."),
+            javaFormat to skill("java-format", "Format Java sources with ktlint."),
+        )
+
+        app().run("$OWNER/$REPO")
+
+        assertContains(
+            out,
+            listOf(
+                "",
+                "SIMILAR (1)",
+                "  ≈ score 0.44",
+                "    java-format — $javaFormat",
+                "    kotlin-format — $kotlinFormat",
+                "    kotlin-lint — $kotlinLint",
+                "",
+                "Total: 3 artifacts found, 3 valid, 0 invalid",
+            ).joinToString("\n"),
+        )
+    }
+
+    @Test
+    fun `invalid artifacts do not take part in similarity`() {
+        givenRepo(
+            SKILL_CODE_REVIEW to skill("code-review", "First."),
+            ".agents/skills/code-review/SKILL.md" to skill("code-review", "Second."),
+            ".claude/commands/code-review.md" to "Review the current diff.\n",
+            SKILL_PR_REVIEW to "---\nname: pr-review\n---\n",
+            ".claude/commands/pr-review.md" to "Review the pull request.\n",
+        )
+
+        val code = app().run("$OWNER/$REPO")
+
+        assertEquals(EXIT_OK, code)
+        assertTrue("SIMILAR" !in out.toString(), "невалидные артефакты не должны попадать в похожие")
+        assertContains(out, "Total: 5 artifacts found, 2 valid, 3 invalid")
+    }
+
+    @Test
+    fun `json lists similar groups with score and paths`() {
+        givenRepo(
+            SKILL_PR_REVIEW to skill("pr-review", "Review the pull request for bugs, style and security issues."),
+            SKILL_CODE_REVIEW to skill("code-review", "Review a pull request for bugs and style issues."),
+        )
+
+        app().run("$OWNER/$REPO", format = "json")
+
+        val body = Json.parseToJsonElement(out.toString()).jsonObject
+        val group = body["similar"]!!.jsonArray.single().jsonObject
+        assertEquals(0.54, group["score"]!!.jsonPrimitive.double)
+        assertEquals(
+            listOf(SKILL_CODE_REVIEW, SKILL_PR_REVIEW),
+            group["paths"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertTrue(body["artifacts"]!!.jsonArray.all { it.jsonObject["valid"]!!.jsonPrimitive.boolean })
+    }
+
+    @Test
+    fun `json has an empty similar array when nothing is similar`() {
+        givenRepo(SKILL_ALPHA to skill("alpha", "Does alpha things."))
+
+        app().run("$OWNER/$REPO", format = "json")
+
+        assertEquals(JsonArray(emptyList()), Json.parseToJsonElement(out.toString()).jsonObject["similar"])
     }
 
     // --- обнаружение ---
@@ -285,5 +467,8 @@ class ScanIntegrationTest {
         const val REPO = "repo"
         const val MAIN = "main"
         const val SKILL_ALPHA = ".claude/skills/alpha/SKILL.md"
+        const val SKILL_CODE_REVIEW = ".claude/skills/code-review/SKILL.md"
+        const val SKILL_PR_REVIEW = ".claude/skills/pr-review/SKILL.md"
+        const val SKILL_RELEASE_NOTES = ".claude/skills/release-notes/SKILL.md"
     }
 }

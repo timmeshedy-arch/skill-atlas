@@ -15,11 +15,18 @@ data class Artifact(
     val error: String?,
 )
 
+/** Группа похожих артефактов (возможных дублей); [paths] отсортированы. */
+data class SimilarGroup(
+    val paths: List<String>,
+    val score: Double,
+)
+
 data class ScanResult(
     val owner: String,
     val repo: String,
     val ref: String,
     val sha: String,
     val artifacts: List<Artifact>,
+    val similar: List<SimilarGroup>,
     val truncated: Boolean,
 )
