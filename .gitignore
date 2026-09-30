@@ -3,3 +3,8 @@ build/
 .kotlin/
 .idea/
 *.iml
+out/
+.DS_Store
+
+# Локальные переопределения — сюда попадают пути к JDK и токены
+local.properties

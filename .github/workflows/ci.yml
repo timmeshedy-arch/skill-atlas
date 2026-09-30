@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Токен раннера не нужен: стаб-тесты в сеть не ходят, а live-tier на CI выключен.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ['17', '21']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ matrix.java }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # build = assemble + check: прогоняет тесты и собирает fat-jar
+      # (shadow-плагин подвешивает shadowJar к assemble).
+      - name: Build and test
+        run: ./gradlew build --no-daemon
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-jdk${{ matrix.java }}
+          path: build/reports/tests/test
+          if-no-files-found: ignore
+
+      - name: Upload fat-jar
+        if: matrix.java == '21'
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-atlas-jar
+          path: build/libs/skill-atlas.jar
+          if-no-files-found: error
