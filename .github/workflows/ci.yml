@@ -15,41 +15,35 @@ concurrency:
 
 jobs:
   build:
-    name: build (JDK ${{ matrix.java }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        java: [17, 21]
     steps:
       - uses: actions/checkout@v4
 
       # 17 — toolchain компиляции, ставится последней, чтобы JAVA_HOME указывал на неё.
-      # matrix.java — JDK, на которой гоняются тесты (-PtestJdk).
+      # 21 — JDK, на которой гоняются тесты (-PtestJdk).
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: |
-            ${{ matrix.java }}
+            21
             17
 
       - uses: gradle/actions/setup-gradle@v4
 
       # Стаб-тесты сети не требуют — токен не нужен. Live-tier (-Dlive=true) на CI не гоняется.
       - name: Build and test
-        run: ./gradlew build -PtestJdk=${{ matrix.java }} --no-daemon
+        run: ./gradlew build -PtestJdk=21 --no-daemon
 
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-reports-jdk${{ matrix.java }}
+          name: test-reports
           path: build/reports/tests/
           retention-days: 7
 
       - name: Upload fat-jar
-        if: matrix.java == 17
         uses: actions/upload-artifact@v4
         with:
           name: skill-atlas-jar

@@ -272,13 +272,13 @@ Live-tier помечен `@Tag("live")` и по умолчанию пропус�
 **CI**
 
 - [ ] Пайплайн зелёный: тот же `./gradlew build`, что и локально.
-- [ ] Прогон на JDK 17 и 21 (toolchain проекта — 17).
+- [ ] Тесты на CI гоняются на JDK 21 (toolchain компиляции проекта — 17).
 - [ ] Fat-jar выкладывается артефактом сборки.
 
 ### CI (GitHub Actions)
 
-`.github/workflows/ci.yml`: `checkout` → `setup-java` (temurin, matrix 17/21) →
-`gradle/actions/setup-gradle` (кэш) → `./gradlew build` → `upload-artifact` с fat-jar.
+`.github/workflows/ci.yml`: `checkout` → `setup-java` (temurin 17 + 21) →
+`gradle/actions/setup-gradle` (кэш) → `./gradlew build -PtestJdk=21` → `upload-artifact` с fat-jar.
 
 Две вещи, на которых наивный конфиг ломается:
 
