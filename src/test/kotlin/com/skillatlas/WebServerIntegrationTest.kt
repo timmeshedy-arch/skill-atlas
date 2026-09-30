@@ -77,6 +77,17 @@ class WebServerIntegrationTest {
         assertContains(response.body(), "<title>Skill Atlas</title>")
     }
 
+    // Сама фильтрация — клиентский JS, в JVM его не прогнать; проверяем, что UI её отдаёт.
+    @Test
+    fun `web UI ships the name filter`() {
+        val body = get("/").body()
+
+        assertContains(body, """<input id="filter"""")
+        assertContains(body, "Filter by name")
+        assertContains(body, "No matches.")
+        assertContains(body, """qs.get("q")""")
+    }
+
     @Test
     fun `scan returns the json report`() {
         givenAlpha()
