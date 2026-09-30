@@ -2,6 +2,7 @@ package com.skillatlas.report
 
 import com.skillatlas.scan.Artifact
 import com.skillatlas.scan.ArtifactType
+import com.skillatlas.scan.MultiScanResult
 import com.skillatlas.scan.ScanResult
 import com.skillatlas.scan.SimilarGroup
 import kotlinx.serialization.json.Json
@@ -125,6 +126,38 @@ object ReportFormatter {
             put("artifacts", artifactsArray)
             put("similar", JsonArray(result.similar.map { group -> similarToJson(group) }))
         }
+    }
+
+    /** Ответ `/api/multi-scan`: структура описана в README. */
+    fun toJson(result: MultiScanResult): JsonObject = buildJsonObject {
+        put("repos", JsonArray(result.repos.map { scan ->
+            buildJsonObject {
+                put("owner", scan.owner)
+                put("repo", scan.repo)
+                put("ref", scan.result?.ref)
+                put("sha", scan.result?.sha)
+                put("truncated", scan.result?.truncated ?: false)
+                put("error", scan.error)
+            }
+        }))
+        put("artifacts", JsonArray(result.artifacts.map { item ->
+            JsonObject(buildJsonObject {
+                put("owner", item.owner)
+                put("repo", item.repo)
+            } + artifactToJson(item.artifact))
+        }))
+        put("similar", JsonArray(result.similar.map { group ->
+            buildJsonObject {
+                put("score", group.score)
+                put("members", JsonArray(group.members.map { member ->
+                    buildJsonObject {
+                        put("owner", member.owner)
+                        put("repo", member.repo)
+                        put("path", member.artifact.path)
+                    }
+                }))
+            }
+        }))
     }
 
     private fun similarToJson(group: SimilarGroup): JsonObject = buildJsonObject {

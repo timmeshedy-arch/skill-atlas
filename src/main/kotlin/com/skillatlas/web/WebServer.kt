@@ -6,6 +6,7 @@ import com.skillatlas.github.GitHubClient
 import com.skillatlas.github.GitHubException
 import com.skillatlas.parseRepo
 import com.skillatlas.report.ReportFormatter
+import com.skillatlas.scan.MultiScanner
 import com.skillatlas.scan.Scanner
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
@@ -23,8 +24,13 @@ import java.util.concurrent.Executors
  *
  * `/api/scan?repo=<repo>&ref=<ref>` отдаёт ту же структуру, что `--format json`.
  * Ошибки GitHub маппятся в HTTP-статусы (404 / 429 / 502) с телом `{"error": "..."}`.
+ * `/api/multi-scan?repo=<repo>&repo=<repo>…` — скан до [MAX_REPOS] репо, которым пользуется UI;
+ * ошибки отдельных репо уходят в тело ответа, а не в статус.
  * Слушает только 127.0.0.1: токен живёт на сервере, наружу его отдавать некому.
  */
+/** Лимит репозиториев на один `/api/multi-scan` — чтобы один клик не съел rate limit. */
+const val MAX_REPOS = 10
+
 class WebServer(
     port: Int = 8080,
     private val token: String?,
@@ -56,6 +62,7 @@ class WebServer(
         when (exchange.requestURI.path) {
             "/", "/index.html" -> serveIndex(exchange)
             "/api/scan" -> serveScan(exchange)
+            "/api/multi-scan" -> serveMultiScan(exchange)
             else -> respondJson(exchange, 404, error("not found"))
         }
     }
@@ -68,13 +75,13 @@ class WebServer(
 
     private fun serveScan(exchange: HttpExchange) {
         val params = parseQuery(exchange.requestURI.rawQuery)
-        val repoArg = params["repo"].orEmpty()
+        val repoArg = params["repo"]?.last().orEmpty()
         val (owner, repo) = parseRepo(repoArg)
             ?: return respondJson(exchange, 400, error("could not parse a GitHub owner/repo from '$repoArg'"))
 
         val client = GitHubClient(token = token, apiBase = apiBase, rawBase = rawBase)
         val (status, body) = try {
-            200 to ReportFormatter.toJson(Scanner(client).scan(owner, repo, params["ref"].orEmpty().trim()))
+            200 to ReportFormatter.toJson(Scanner(client).scan(owner, repo, params["ref"]?.last().orEmpty().trim()))
         } catch (e: GitHubException.NotFound) {
             404 to error("repository or ref not found")
         } catch (e: GitHubException.RateLimited) {
@@ -87,11 +94,25 @@ class WebServer(
         respondJson(exchange, status, body)
     }
 
-    private fun parseQuery(rawQuery: String?): Map<String, String> =
-        rawQuery.orEmpty().split("&").filter { it.isNotEmpty() }.associate { pair ->
-            val (key, value) = pair.split("=", limit = 2).let { it[0] to it.getOrElse(1) { "" } }
-            decode(key) to decode(value)
-        }
+    private fun serveMultiScan(exchange: HttpExchange) {
+        val repoArgs = parseQuery(exchange.requestURI.rawQuery)["repo"].orEmpty()
+        val repos = repoArgs
+            .map { arg ->
+                parseRepo(arg)
+                    ?: return respondJson(exchange, 400, error("could not parse a GitHub owner/repo from '$arg'"))
+            }
+            .distinctBy { (owner, repo) -> "$owner/$repo".lowercase() }
+        if (repos.isEmpty()) return respondJson(exchange, 400, error("at least one repo is required"))
+        if (repos.size > MAX_REPOS) return respondJson(exchange, 400, error("at most $MAX_REPOS repos per scan"))
+
+        val client = GitHubClient(token = token, apiBase = apiBase, rawBase = rawBase)
+        respondJson(exchange, 200, ReportFormatter.toJson(MultiScanner(Scanner(client)).scan(repos)))
+    }
+
+    private fun parseQuery(rawQuery: String?): Map<String, List<String>> =
+        rawQuery.orEmpty().split("&").filter { it.isNotEmpty() }
+            .map { pair -> pair.split("=", limit = 2).let { decode(it[0]) to decode(it.getOrElse(1) { "" }) } }
+            .groupBy({ it.first }, { it.second })
 
     private fun decode(s: String) = URLDecoder.decode(s, StandardCharsets.UTF_8)
 

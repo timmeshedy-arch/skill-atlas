@@ -30,3 +30,30 @@ data class ScanResult(
     val similar: List<SimilarGroup>,
     val truncated: Boolean,
 )
+
+/** Артефакт с репозиторием, откуда он взят, — для сканов нескольких репо. */
+data class RepoArtifact(
+    val owner: String,
+    val repo: String,
+    val artifact: Artifact,
+)
+
+/** Итог одного репо в мульти-скане: либо [result], либо [error]. */
+data class RepoScan(
+    val owner: String,
+    val repo: String,
+    val result: ScanResult?,
+    val error: String?,
+)
+
+/** Группа похожих артефактов, возможно из разных репо; [members] отсортированы по owner/repo/path. */
+data class MultiSimilarGroup(
+    val members: List<RepoArtifact>,
+    val score: Double,
+)
+
+data class MultiScanResult(
+    val repos: List<RepoScan>,
+    val artifacts: List<RepoArtifact>,
+    val similar: List<MultiSimilarGroup>,
+)

@@ -2,6 +2,7 @@ package com.skillatlas
 
 import com.skillatlas.web.WebServer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
@@ -60,12 +61,23 @@ class WebServerIntegrationTest {
         return get("/api/scan?$query", server)
     }
 
+    private fun multiScan(vararg repos: String): HttpResponse<String> =
+        get("/api/multi-scan?" + repos.joinToString("&") { "repo=" + URLEncoder.encode(it, StandardCharsets.UTF_8) })
+
     private fun json(response: HttpResponse<String>): JsonObject = Json.parseToJsonElement(response.body()).jsonObject
+
+    private fun JsonObject.str(key: String): String = this[key]!!.jsonPrimitive.content
 
     private fun givenAlpha(branch: String = MAIN) {
         gh.repo(OWNER, REPO, MAIN)
         gh.tree(OWNER, REPO, branch, blobs = listOf(SKILL_ALPHA))
         gh.file(OWNER, REPO, branch, SKILL_ALPHA, "---\nname: alpha\ndescription: Does alpha things.\n---\n")
+    }
+
+    private fun givenSkill(repo: String, name: String, description: String, branch: String = MAIN) {
+        gh.repo(OWNER, repo, branch)
+        gh.tree(OWNER, repo, branch, blobs = listOf(SKILL_ALPHA))
+        gh.file(OWNER, repo, branch, SKILL_ALPHA, "---\nname: $name\ndescription: $description\n---\n")
     }
 
     @Test
@@ -86,6 +98,88 @@ class WebServerIntegrationTest {
         assertContains(body, "Filter by name")
         assertContains(body, "No matches.")
         assertContains(body, """qs.get("q")""")
+    }
+
+    @Test
+    fun `web UI scans several repos without a ref input`() {
+        val body = get("/").body()
+
+        assertFalse(body.contains("""id="ref""""))
+        assertContains(body, """<button id="add"""")
+        assertContains(body, "api/multi-scan")
+        assertContains(body, """qs.getAll("repo")""")
+    }
+
+    @Test
+    fun `multi-scan merges artifacts of all repos`() {
+        givenSkill(REPO, "alpha", "Does alpha things.")
+        givenSkill(OTHER, "beta", "Builds beta widgets.", branch = "trunk")
+
+        val response = multiScan("$OWNER/$REPO", "https://github.com/$OWNER/$OTHER")
+
+        assertEquals(200, response.statusCode())
+        val body = json(response)
+        val repos = body["repos"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf(REPO, OTHER), repos.map { it.str("repo") })
+        assertEquals(listOf(MAIN, "trunk"), repos.map { it.str("ref") })
+        assertTrue(repos.all { it.str("sha") == StubGitHub.SHA && it["error"] == JsonNull })
+        val artifacts = body["artifacts"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(
+            listOf("$OWNER/$REPO:alpha", "$OWNER/$OTHER:beta"),
+            artifacts.map { "${it.str("owner")}/${it.str("repo")}:${it.str("name")}" },
+        )
+        assertEquals(0, body["similar"]!!.jsonArray.size)
+    }
+
+    @Test
+    fun `same skill in two repos is valid and similar across repos`() {
+        givenSkill(REPO, "alpha", "Does alpha things.")
+        givenSkill(OTHER, "alpha", "Does alpha things.")
+
+        val body = json(multiScan("$OWNER/$REPO", "$OWNER/$OTHER"))
+
+        assertTrue(body["artifacts"]!!.jsonArray.all { it.jsonObject["valid"]!!.jsonPrimitive.boolean })
+        val group = body["similar"]!!.jsonArray.single().jsonObject
+        assertEquals(1.0, group.str("score").toDouble())
+        assertEquals(
+            listOf("$OWNER/$OTHER/$SKILL_ALPHA", "$OWNER/$REPO/$SKILL_ALPHA"),
+            group["members"]!!.jsonArray.map { it.jsonObject }.map { "${it.str("owner")}/${it.str("repo")}/${it.str("path")}" },
+        )
+    }
+
+    @Test
+    fun `failing repo is reported per repo and does not break the others`() {
+        givenSkill(REPO, "alpha", "Does alpha things.")
+
+        val response = multiScan("$OWNER/$OTHER", "$OWNER/$REPO")
+
+        assertEquals(200, response.statusCode())
+        val body = json(response)
+        val (failed, ok) = body["repos"]!!.jsonArray.map { it.jsonObject }
+        assertEquals("repository not found", failed.str("error"))
+        assertEquals(JsonNull, failed["sha"])
+        assertEquals(JsonNull, ok["error"])
+        assertEquals(REPO, body["artifacts"]!!.jsonArray.single().jsonObject.str("repo"))
+    }
+
+    @Test
+    fun `duplicate repos are scanned once`() {
+        givenSkill(REPO, "alpha", "Does alpha things.")
+
+        val body = json(multiScan("$OWNER/$REPO", "https://github.com/${OWNER.uppercase()}/$REPO.git"))
+
+        assertEquals(1, body["repos"]!!.jsonArray.size)
+        assertEquals(1, gh.requests.count { it.path == "repos/$OWNER/$REPO" })
+    }
+
+    @Test
+    fun `multi-scan rejects no repos, too many repos and unparsable repos`() {
+        assertEquals(400, get("/api/multi-scan").statusCode())
+        assertEquals(400, multiScan(*Array(11) { "$OWNER/r$it" }).statusCode())
+        val unparsable = multiScan("$OWNER/$REPO", "foo")
+        assertEquals(400, unparsable.statusCode())
+        assertContains(json(unparsable).str("error"), "'foo'")
+        assertTrue(gh.requests.isEmpty())
     }
 
     @Test
@@ -180,6 +274,7 @@ class WebServerIntegrationTest {
     private companion object {
         const val OWNER = "owner"
         const val REPO = "repo"
+        const val OTHER = "other"
         const val MAIN = "main"
         const val SKILL_ALPHA = ".claude/skills/alpha/SKILL.md"
         const val SECRET = "ghp_supersecret"
