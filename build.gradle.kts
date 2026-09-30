@@ -32,6 +32,10 @@ val liveProp: String? = providers.systemProperty("live").orNull
 val liveTestsEnabled: Boolean = liveProp != null && !liveProp.equals("false", ignoreCase = true)
 
 tasks.test {
+    // Тесты можно прогнать на другой JDK, не меняя toolchain компиляции: ./gradlew test -PtestJdk=21
+    providers.gradleProperty("testJdk").orNull?.let { jdk ->
+        javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(jdk)) })
+    }
     useJUnitPlatform {
         if (!liveTestsEnabled) {
             excludeTags("live")
