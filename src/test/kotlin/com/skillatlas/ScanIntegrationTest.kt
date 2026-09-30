@@ -275,6 +275,38 @@ class ScanIntegrationTest {
     }
 
     @Test
+    fun `camelCase and same-name command form separate groups ordered by path`() {
+        val deploySkill = ".claude/skills/deploy/SKILL.md"
+        val deployCommand = ".claude/commands/deploy.md"
+        val camel = ".agents/skills/codeReview/SKILL.md"
+        val kebab = ".claude/skills/code-review/SKILL.md"
+        givenRepo(
+            deploySkill to skill("deploy", "Ship the service to production."),
+            deployCommand to "Ship it.\n",
+            kebab to skill("code-review", "Review the current diff."),
+            camel to skill("codeReview", "Review a pull request."),
+        )
+
+        app().run("$OWNER/$REPO")
+
+        assertContains(
+            out,
+            listOf(
+                "",
+                "SIMILAR (2)",
+                "  ≈ score 0.68",
+                "    codeReview — $camel",
+                "    code-review — $kebab",
+                "  ≈ score 0.60",
+                "    /deploy — $deployCommand",
+                "    deploy — $deploySkill",
+                "",
+                "Total: 4 artifacts found, 4 valid, 0 invalid",
+            ).joinToString("\n"),
+        )
+    }
+
+    @Test
     fun `invalid artifacts do not take part in similarity`() {
         givenRepo(
             SKILL_CODE_REVIEW to skill("code-review", "First."),
