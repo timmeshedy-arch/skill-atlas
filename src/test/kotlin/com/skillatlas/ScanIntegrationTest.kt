@@ -218,7 +218,7 @@ class ScanIntegrationTest {
         val checklist = ".claude/skills/release-checklist/SKILL.md"
         givenRepo(
             SKILL_RELEASE_NOTES to skill("release-notes", "Draft release notes from merged pull requests."),
-            checklist to skill("release-checklist", "Checklist for cutting a release branch: version bump, changelog, tagging."),
+            checklist to skill("release-checklist", "Checklist for cutting a release branch — version bump, changelog, tagging."),
             ".claude/commands/fmt.md" to "Run ktlint over the changed files.\n",
         )
 
@@ -234,7 +234,7 @@ class ScanIntegrationTest {
                 "    Draft release notes from merged pull requests.",
                 "  ✔ release-checklist — valid",
                 "    ${permalink(checklist)}",
-                "    Checklist for cutting a release branch: version bump, changelog, tagging.",
+                "    Checklist for cutting a release branch — version bump, changelog, tagging.",
                 "",
                 "COMMANDS (1)",
                 "  ✔ /fmt — valid",
