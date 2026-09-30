@@ -4,3 +4,4 @@ build/
 .idea/
 *.iml
 gradle.properties
+.claude/skills/record-demo/node_modules/
