@@ -1,0 +1,177 @@
+{
+  "repos": [
+    {
+      "owner": "anthropics",
+      "repo": "skills",
+      "ref": "main",
+      "sha": "8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4",
+      "truncated": false,
+      "error": null
+    },
+    {
+      "owner": "anthropics",
+      "repo": "claude-code",
+      "ref": "main",
+      "sha": "732e167ee9d71296b4b63d6f529ac1334513826a",
+      "truncated": false,
+      "error": null
+    },
+    {
+      "owner": "nope",
+      "repo": "does-not-exist",
+      "ref": null,
+      "sha": null,
+      "truncated": false,
+      "error": "repository not found"
+    }
+  ],
+  "artifacts": [
+    {
+      "owner": "anthropics",
+      "repo": "skills",
+      "type": "SKILL",
+      "path": "skills/frontend-design/SKILL.md",
+      "name": "frontend-design",
+      "description": "Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults.",
+      "url": "https://github.com/anthropics/skills/blob/8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4/skills/frontend-design/SKILL.md",
+      "valid": true,
+      "error": null
+    },
+    {
+      "owner": "anthropics",
+      "repo": "skills",
+      "type": "SKILL",
+      "path": "skills/pdf/SKILL.md",
+      "name": "pdf",
+      "description": "Use this skill whenever the user wants to do anything with PDF files. This includes reading or extracting text/tables from PDFs, combining or merging multiple PDFs into one, splitting PDFs apart, rotating pages, adding watermarks, creating new PDFs, filling PDF forms, encrypting/decrypting PDFs, extracting images, and OCR on scanned PDFs to make them searchable. If the user mentions a .pdf file or asks to produce one, use this skill.",
+      "url": "https://github.com/anthropics/skills/blob/8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4/skills/pdf/SKILL.md",
+      "valid": true,
+      "error": null
+    },
+    {
+      "owner": "anthropics",
+      "repo": "skills",
+      "type": "SKILL",
+      "path": "skills/skill-creator/SKILL.md",
+      "name": "skill-creator",
+      "description": "Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, edit, or optimize an existing skill, run evals to test a skill, benchmark skill performance with variance analysis, or optimize a skill's description for better triggering accuracy.",
+      "url": "https://github.com/anthropics/skills/blob/8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4/skills/skill-creator/SKILL.md",
+      "valid": true,
+      "error": null
+    },
+    {
+      "owner": "anthropics",
+      "repo": "skills",
+      "type": "SKILL",
+      "path": "skills/webapp-testing/SKILL.md",
+      "name": "webapp-testing",
+      "description": "Toolkit for interacting with and testing local web applications using Playwright. Supports verifying frontend functionality, debugging UI behavior, capturing browser screenshots, and viewing browser logs.",
+      "url": "https://github.com/anthropics/skills/blob/8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4/skills/webapp-testing/SKILL.md",
+      "valid": true,
+      "error": null
+    },
+    {
+      "owner": "anthropics",
+      "repo": "claude-code",
+      "type": "COMMAND",
+      "path": ".claude/commands/commit-push-pr.md",
+      "name": null,
+      "description": "Commit, push, and open a PR",
+      "url": "https://github.com/anthropics/claude-code/blob/732e167ee9d71296b4b63d6f529ac1334513826a/.claude/commands/commit-push-pr.md",
+      "valid": false,
+      "error": "missing 'name'"
+    },
+    {
+      "owner": "anthropics",
+      "repo": "claude-code",
+      "type": "COMMAND",
+      "path": "plugins/code-review/commands/code-review.md",
+      "name": null,
+      "description": "Code review a pull request",
+      "url": "https://github.com/anthropics/claude-code/blob/732e167ee9d71296b4b63d6f529ac1334513826a/plugins/code-review/commands/code-review.md",
+      "valid": false,
+      "error": "missing 'name'"
+    },
+    {
+      "owner": "anthropics",
+      "repo": "claude-code",
+      "type": "SKILL",
+      "path": "plugins/frontend-design/skills/frontend-design/SKILL.md",
+      "name": "frontend-design",
+      "description": "Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults.",
+      "url": "https://github.com/anthropics/claude-code/blob/732e167ee9d71296b4b63d6f529ac1334513826a/plugins/frontend-design/skills/frontend-design/SKILL.md",
+      "valid": true,
+      "error": null
+    },
+    {
+      "owner": "anthropics",
+      "repo": "claude-code",
+      "type": "SKILL",
+      "path": "plugins/plugin-dev/skills/agent-development/SKILL.md",
+      "name": "Agent Development",
+      "description": "This skill should be used when the user asks to \"create an agent\", \"add an agent\", \"write a subagent\", \"agent frontmatter\", \"when to use description\", \"agent examples\", \"agent tools\", \"agent colors\", \"autonomous agent\", or needs guidance on agent structure, system prompts, triggering conditions, or agent development best practices for Claude Code plugins.",
+      "url": "https://github.com/anthropics/claude-code/blob/732e167ee9d71296b4b63d6f529ac1334513826a/plugins/plugin-dev/skills/agent-development/SKILL.md",
+      "valid": true,
+      "error": null
+    },
+    {
+      "owner": "anthropics",
+      "repo": "claude-code",
+      "type": "SKILL",
+      "path": "plugins/plugin-dev/skills/command-development/SKILL.md",
+      "name": "Command Development",
+      "description": "This skill should be used when the user asks to \"create a slash command\", \"add a command\", \"write a custom command\", \"define command arguments\", \"use command frontmatter\", \"organize commands\", \"create command with file references\", \"interactive command\", \"use AskUserQuestion in command\", or needs guidance on slash command structure, YAML frontmatter fields, dynamic arguments, bash execution in commands, user interaction patterns, or command development best practices for Claude Code.",
+      "url": "https://github.com/anthropics/claude-code/blob/732e167ee9d71296b4b63d6f529ac1334513826a/plugins/plugin-dev/skills/command-development/SKILL.md",
+      "valid": true,
+      "error": null
+    },
+    {
+      "owner": "anthropics",
+      "repo": "claude-code",
+      "type": "SKILL",
+      "path": "plugins/plugin-dev/skills/skill-development/SKILL.md",
+      "name": "Skill Development",
+      "description": "This skill should be used when the user wants to \"create a skill\", \"add a skill to plugin\", \"write a new skill\", \"improve skill description\", \"organize skill content\", or needs guidance on skill structure, progressive disclosure, or skill development best practices for Claude Code plugins.",
+      "url": "https://github.com/anthropics/claude-code/blob/732e167ee9d71296b4b63d6f529ac1334513826a/plugins/plugin-dev/skills/skill-development/SKILL.md",
+      "valid": true,
+      "error": null
+    }
+  ],
+  "similar": [
+    {
+      "score": 1.0,
+      "members": [
+        {
+          "owner": "anthropics",
+          "repo": "claude-code",
+          "path": "plugins/frontend-design/skills/frontend-design/SKILL.md"
+        },
+        {
+          "owner": "anthropics",
+          "repo": "skills",
+          "path": "skills/frontend-design/SKILL.md"
+        }
+      ]
+    },
+    {
+      "score": 0.73,
+      "members": [
+        {
+          "owner": "anthropics",
+          "repo": "claude-code",
+          "path": "plugins/plugin-dev/skills/agent-development/SKILL.md"
+        },
+        {
+          "owner": "anthropics",
+          "repo": "claude-code",
+          "path": "plugins/plugin-dev/skills/command-development/SKILL.md"
+        },
+        {
+          "owner": "anthropics",
+          "repo": "claude-code",
+          "path": "plugins/plugin-dev/skills/skill-development/SKILL.md"
+        }
+      ]
+    }
+  ]
+}

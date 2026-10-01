@@ -1,0 +1,99 @@
+name: UI screenshots
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Эталоны linux снимаются только здесь (см. «Render current screenshots»).
+    # Тег должен совпадать с версией @playwright/test в e2e/package.json.
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build jar
+        run: ./gradlew shadowJar --no-daemon
+
+      - name: Install Playwright
+        working-directory: e2e
+        run: npm ci --no-audit --no-fund
+
+      - name: Compare screenshots
+        id: compare
+        working-directory: e2e
+        run: npx playwright test
+
+      # HTML-отчёт: у каждого упавшего кадра expected / actual / diff и слайдер сравнения.
+      - name: Upload report
+        id: report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots-report
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          retention-days: 14
+
+      # Полный набор текущих кадров — новые эталоны linux, если изменение ожидаемое
+      # (e2e/pull-ci-baselines.sh). Отчёт уже выгружен: этот прогон его не пишет.
+      - name: Render current screenshots
+        if: failure() && steps.compare.outcome == 'failure'
+        working-directory: e2e
+        run: npx playwright test --update-snapshots=all --reporter=list --output=/tmp/pw-render || true
+
+      - name: Upload current screenshots
+        id: current
+        if: failure() && steps.compare.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots-linux
+          path: e2e/__screenshots__/linux/
+          retention-days: 14
+
+      - name: Summary
+        if: failure() && steps.compare.outcome == 'failure'
+        working-directory: e2e
+        env:
+          REPORT_URL: ${{ steps.report.outputs.artifact-url }}
+          CURRENT_URL: ${{ steps.current.outputs.artifact-url }}
+        run: |
+          {
+            echo "## ❌ UI screenshots differ from baselines"
+            echo
+            echo "| Frame | Diff |"
+            echo "|---|---|"
+            find test-results -name '*-diff.png' | sort | while read -r f; do
+              echo "| \`$(basename "$f" -diff.png)\` | \`$f\` |"
+            done
+            find test-results -name '*-actual.png' | sort | while read -r f; do
+              [ -e "${f%-actual.png}-diff.png" ] || echo "| \`$(basename "$f" -actual.png)\` | no baseline |"
+            done
+            echo
+            echo "Diffs (expected / actual / diff): [ui-screenshots-report]($REPORT_URL) —"
+            echo "unzip and open \`playwright-report/index.html\`."
+            echo
+            echo "Intended change? Current frames: [ui-screenshots-linux]($CURRENT_URL)."
+            echo "Take them as linux baselines: \`e2e/pull-ci-baselines.sh ${{ github.run_id }}\`, review, commit."
+          } >> "$GITHUB_STEP_SUMMARY"
