@@ -1,6 +1,7 @@
 package com.skillatlas
 
 import com.skillatlas.StubGitHub.ListedRepo
+import com.skillatlas.web.StarStore
 import com.skillatlas.web.WebServer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
@@ -10,12 +11,14 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.junit.jupiter.api.io.TempDir
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
+import java.nio.file.Path
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -28,6 +31,9 @@ import kotlin.test.assertTrue
  * Интеграционные тесты `serve`: `HTTP-запрос UI → WebServer → стаб GitHub → JSON`.
  */
 class WebServerIntegrationTest {
+
+    @TempDir
+    lateinit var dir: Path
 
     private lateinit var gh: StubGitHub
     private lateinit var web: WebServer
@@ -46,7 +52,13 @@ class WebServerIntegrationTest {
     }
 
     private fun server(token: String?) =
-        WebServer(port = 0, token = token, apiBase = gh.apiBase, rawBase = gh.rawBase).also { it.start() }
+        WebServer(
+            port = 0,
+            token = token,
+            stars = StarStore(dir.resolve("stars.json")),
+            apiBase = gh.apiBase,
+            rawBase = gh.rawBase,
+        ).also { it.start() }
 
     private fun get(path: String, server: WebServer = web, method: String = "GET"): HttpResponse<String> {
         val request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:${server.port}$path"))
