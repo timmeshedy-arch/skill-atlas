@@ -5,8 +5,7 @@ import com.skillatlas.github.GitHubClient
 class Scanner(private val client: GitHubClient) {
 
     fun scan(owner: String, repo: String, ref: String): ScanResult {
-        val repoInfo = client.getRepoInfo(owner, repo)
-        val resolvedRef = if (ref.isBlank()) repoInfo.default_branch else ref
+        val resolvedRef = ref.ifBlank { client.getRepoInfo(owner, repo).default_branch }
         val tree = client.getTree(owner, repo, resolvedRef)
 
         val candidates = ArtifactScanner.findCandidates(tree.tree)

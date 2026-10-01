@@ -31,14 +31,23 @@ data class ScanResult(
     val truncated: Boolean,
 )
 
-/** Артефакт с репозиторием, откуда он взят, — для сканов нескольких репо. */
+/** Артефакт с репозиторием, откуда он взят, — для скана организаций. */
 data class RepoArtifact(
     val owner: String,
     val repo: String,
     val artifact: Artifact,
 )
 
-/** Итог одного репо в мульти-скане: либо [result], либо [error]. */
+/** Итог листинга организации: [repoCount] репо пошло в скан, либо [error]. */
+data class OrgScan(
+    val org: String,
+    val repoCount: Int,
+    /** У организации больше репо, чем одна страница листинга, — остальные не сканировались. */
+    val truncated: Boolean,
+    val error: String?,
+)
+
+/** Итог одного репо в скане организаций: либо [result], либо [error]. */
 data class RepoScan(
     val owner: String,
     val repo: String,
@@ -52,7 +61,8 @@ data class MultiSimilarGroup(
     val score: Double,
 )
 
-data class MultiScanResult(
+data class OrgScanResult(
+    val orgs: List<OrgScan>,
     val repos: List<RepoScan>,
     val artifacts: List<RepoArtifact>,
     val similar: List<MultiSimilarGroup>,

@@ -63,7 +63,7 @@
   }
   input::placeholder { color: var(--faint); }
   input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(35, 131, 226, .15); }
-  #repo { flex: 1 1 320px; min-width: 0; }
+  #org { flex: 1 1 320px; min-width: 0; }
   #filter { display: block; width: 100%; margin-top: 24px; }
   button {
     font: inherit;
@@ -191,10 +191,10 @@
 <main>
   <div class="icon">🗺️</div>
   <h1>Skill Atlas</h1>
-  <p class="subtitle">Claude Code skills and slash commands defined in GitHub repositories.</p>
+  <p class="subtitle">Claude Code skills and slash commands defined across the repositories of GitHub organizations.</p>
 
   <form id="form" autocomplete="off">
-    <input id="repo" name="repo" placeholder="owner/repo or https://github.com/owner/repo" autofocus>
+    <input id="org" name="org" placeholder="organization or https://github.com/organization" autofocus>
     <button id="add" type="button" class="secondary">Add</button>
     <button id="scan" type="submit">Scan</button>
   </form>
@@ -208,11 +208,11 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const form = $("form"), repoInput = $("repo"), addButton = $("add");
+  const form = $("form"), orgInput = $("org"), addButton = $("add");
   const button = $("scan"), statusBox = $("status"), result = $("result");
   const filterInput = $("filter"), chipsBox = $("chips"), hint = $("hint");
-  const MAX_REPOS = 10;
-  let repos = [], scanning = false, lastData = null, groupsBox = null;
+  const MAX_ORGS = 5, PAGE_SIZE = 100;
+  let orgs = [], scanning = false, lastData = null, groupsBox = null;
 
   const GROUPS = [
     { type: "SKILL", title: "Skills" },
@@ -232,45 +232,44 @@
     statusBox.hidden = false;
   }
 
-  // Same forms as the CLI <repo> argument (see RepoArg.kt); returns "owner/repo" or null.
-  function parseRepo(input) {
-    const s = input.trim().replace(/\.git$/, "").replace(/\/$/, "")
-      .replace(/^(https?:\/\/|git@)/, "").replace(/^github\.com[\/:]/, "");
-    const parts = s.split("/").filter((p) => p.trim());
-    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : null;
+  // Same forms as parseOrg in RepoArg.kt: "org", "@org", "https://github.com/org"; returns the login or null.
+  function parseOrg(input) {
+    const s = input.trim().replace(/\/$/, "")
+      .replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/^github\.com\//, "").replace(/^@/, "");
+    return /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(s) ? s : null;
   }
 
   function renderChips() {
-    chipsBox.replaceChildren(...repos.map((r) => el("span", { className: "chip" },
-      r,
-      el("button", { type: "button", title: `Remove ${r}`, textContent: "×", onclick: () => removeRepo(r) }),
+    chipsBox.replaceChildren(...orgs.map((o) => el("span", { className: "chip" },
+      o,
+      el("button", { type: "button", title: `Remove ${o}`, textContent: "×", onclick: () => removeOrg(o) }),
     )));
-    button.disabled = scanning || (!repos.length && !repoInput.value.trim());
+    button.disabled = scanning || (!orgs.length && !orgInput.value.trim());
   }
 
   // Adds the input value to the list; returns false (with a hint) if it can't be added.
-  function addRepo(input) {
-    const repo = parseRepo(input);
-    if (!repo) { hint.textContent = `Can't parse "${input.trim()}" as owner/repo.`; return false; }
-    if (repos.some((r) => r.toLowerCase() === repo.toLowerCase())) { hint.textContent = `${repo} is already added.`; return false; }
-    if (repos.length >= MAX_REPOS) { hint.textContent = `At most ${MAX_REPOS} repositories.`; return false; }
-    repos.push(repo);
+  function addOrg(input) {
+    const org = parseOrg(input);
+    if (!org) { hint.textContent = `Can't parse "${input.trim()}" as an organization.`; return false; }
+    if (orgs.some((o) => o.toLowerCase() === org.toLowerCase())) { hint.textContent = `${org} is already added.`; return false; }
+    if (orgs.length >= MAX_ORGS) { hint.textContent = `At most ${MAX_ORGS} organizations.`; return false; }
+    orgs.push(org);
     hint.textContent = "";
     renderChips();
     return true;
   }
 
-  function removeRepo(repo) {
-    repos = repos.filter((r) => r !== repo);
+  function removeOrg(org) {
+    orgs = orgs.filter((o) => o !== org);
     hint.textContent = "";
     renderChips();
   }
 
   function addFromInput() {
-    const value = repoInput.value.trim();
-    if (value && addRepo(value)) repoInput.value = "";
+    const value = orgInput.value.trim();
+    if (value && addOrg(value)) orgInput.value = "";
     renderChips();
-    repoInput.focus();
+    orgInput.focus();
   }
 
   const artifactKey = (x) => `${x.owner}/${x.repo}/${x.path}`;
@@ -324,18 +323,23 @@
     history.replaceState(null, "", "?" + params);
   }
 
-  function renderRepoLine(r) {
-    const name = `${r.owner}/${r.repo}`;
-    if (r.error) {
-      return el("div", { className: "line" },
-        el("span", { textContent: name }),
-        el("span", { className: "tag bad", textContent: r.error }),
-      );
+  function renderOrgLine(o) {
+    const link = el("a", { href: `https://github.com/${o.org}`, target: "_blank", rel: "noopener", textContent: o.org });
+    if (o.error) {
+      return el("div", { className: "line" }, link, el("span", { className: "tag bad", textContent: o.error }));
     }
     return el("div", { className: "line" },
-      el("a", { href: `https://github.com/${name}/tree/${r.sha}`, target: "_blank", rel: "noopener", textContent: name }),
-      el("span", {}, "@ ", el("code", { textContent: r.ref })),
-      el("span", { textContent: r.sha.slice(0, 7) }),
+      link,
+      el("span", { textContent: `${o.repos} ${o.repos === 1 ? "repository" : "repositories"}` }),
+      o.truncated ? el("span", { className: "tag warn", textContent: "most recently pushed only" }) : null,
+    );
+  }
+
+  // Only failed repos get a line: an organization can have a hundred of them.
+  function renderRepoError(r) {
+    return el("div", { className: "line" },
+      el("span", { textContent: `${r.owner}/${r.repo}` }),
+      el("span", { className: "tag bad", textContent: r.error }),
     );
   }
 
@@ -345,7 +349,8 @@
 
     const nodes = [
       el("div", { className: "meta" },
-        ...data.repos.map(renderRepoLine),
+        ...data.orgs.map(renderOrgLine),
+        ...data.repos.filter((r) => r.error).map(renderRepoError),
         el("div", { className: "line", textContent: `${total} found · ${valid} valid · ${total - valid} invalid` }),
       ),
     ];
@@ -375,9 +380,13 @@
     result.hidden = false;
     filterInput.hidden = false;
 
+    const warnings = [];
+    const bigOrgs = data.orgs.filter((o) => o.truncated).map((o) => o.org);
+    if (bigOrgs.length) warnings.push(`Only the ${PAGE_SIZE} most recently pushed repositories of ${bigOrgs.join(", ")} were fetched.`);
     const truncated = data.repos.filter((r) => r.truncated).map((r) => `${r.owner}/${r.repo}`);
-    if (truncated.length) {
-      showStatus("warn", "⚠️", el("span", { textContent: `GitHub truncated the file tree of ${truncated.join(", ")} — results may be incomplete.` }));
+    if (truncated.length) warnings.push(`GitHub truncated the file tree of ${truncated.join(", ")}.`);
+    if (warnings.length) {
+      showStatus("warn", "⚠️", el("span", { textContent: warnings.join(" ") + " Results may be incomplete." }));
     } else {
       statusBox.hidden = true;
     }
@@ -387,16 +396,16 @@
     scanning = true;
     button.disabled = addButton.disabled = true;
     result.hidden = true;
-    const label = repos.length === 1 ? repos[0] : `${repos.length} repositories`;
+    const label = orgs.length === 1 ? orgs[0] : `${orgs.length} organizations`;
     showStatus("", el("div", { className: "spinner" }), el("span", { textContent: `Scanning ${label}…` }));
 
-    const params = new URLSearchParams(repos.map((r) => ["repo", r]));
+    const params = new URLSearchParams(orgs.map((o) => ["org", o]));
     history.replaceState(null, "", "?" + params);
     syncFilterToUrl();
-    try { localStorage.setItem("skill-atlas:last", JSON.stringify({ repos })); } catch {}
+    try { localStorage.setItem("skill-atlas:last", JSON.stringify({ orgs })); } catch {}
 
     try {
-      const res = await fetch("api/multi-scan?" + params);
+      const res = await fetch("api/org-scan?" + params);
       const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
       render(body);
@@ -410,37 +419,36 @@
   }
 
   // Enter with text in the field adds it; Enter on an empty field submits the form (scan).
-  repoInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && repoInput.value.trim()) { e.preventDefault(); addFromInput(); }
+  orgInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && orgInput.value.trim()) { e.preventDefault(); addFromInput(); }
   });
   // Scan: text left in the field is added to the list first.
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    const value = repoInput.value.trim();
-    if (value && !addRepo(value)) return;
-    repoInput.value = "";
+    const value = orgInput.value.trim();
+    if (value && !addOrg(value)) return;
+    orgInput.value = "";
     renderChips();
-    if (repos.length) scan();
+    if (orgs.length) scan();
   });
   addButton.addEventListener("click", addFromInput);
-  repoInput.addEventListener("input", renderChips);
+  orgInput.addEventListener("input", renderChips);
 
   filterInput.addEventListener("input", () => {
     syncFilterToUrl();
     if (lastData) renderGroups();
   });
 
-  // Prefill from ?repo=a&repo=b&q= (shareable link) or the last scan.
+  // Prefill from ?org=a&org=b&q= (shareable link) or the last scan.
   const qs = new URLSearchParams(location.search);
   filterInput.value = qs.get("q") || "";
-  if (qs.getAll("repo").length) {
-    qs.getAll("repo").forEach(addRepo);
-    if (repos.length) scan();
+  if (qs.getAll("org").length) {
+    qs.getAll("org").forEach(addOrg);
+    if (orgs.length) scan();
   } else {
     try {
-      const last = JSON.parse(localStorage.getItem("skill-atlas:last") || "null");
-      // Before multi-repo the last scan was stored as { repo, ref }.
-      (last?.repos || (last?.repo ? [last.repo] : [])).forEach(addRepo);
+      // Scans of repository lists ({ repos }) from earlier versions are not carried over.
+      (JSON.parse(localStorage.getItem("skill-atlas:last") || "null")?.orgs || []).forEach(addOrg);
     } catch {}
   }
   renderChips();
