@@ -11,9 +11,11 @@ import com.skillatlas.scan.OrgScanner
 import com.skillatlas.scan.Scanner
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
@@ -27,6 +29,8 @@ import java.util.concurrent.Executors
  * Ошибки GitHub маппятся в HTTP-статусы (404 / 429 / 502) с телом `{"error": "..."}`.
  * `/api/org-scan?org=<org>&org=<org>…` — скан всех репо до [MAX_ORGS] организаций, которым
  * пользуется UI; ошибки отдельных организаций и репо уходят в тело ответа, а не в статус.
+ * `/api/stars` — звёзды UI из [StarStore]: `GET` — список, `PUT` / `DELETE` с
+ * `?owner=&repo=&path=` — поставить / снять. Остальное — только `GET`.
  * Слушает только 127.0.0.1: токен живёт на сервере, наружу его отдавать некому.
  */
 /** Лимит организаций на один `/api/org-scan` — чтобы один клик не съел rate limit. */
@@ -35,6 +39,7 @@ const val MAX_ORGS = 5
 class WebServer(
     port: Int = 8080,
     private val token: String?,
+    private val stars: StarStore,
     private val apiBase: String = DEFAULT_API_BASE,
     private val rawBase: String = DEFAULT_RAW_BASE,
 ) : AutoCloseable {
@@ -57,15 +62,43 @@ class WebServer(
     }
 
     private fun handle(exchange: HttpExchange) {
-        if (exchange.requestMethod != "GET") {
+        val method = exchange.requestMethod
+        val path = exchange.requestURI.path
+        if (path == "/api/stars") return serveStars(exchange, method)
+        if (method != "GET") {
             return respondJson(exchange, 405, error("method not allowed"))
         }
-        when (exchange.requestURI.path) {
+        when (path) {
             "/", "/index.html" -> serveIndex(exchange)
             "/api/scan" -> serveScan(exchange)
             "/api/org-scan" -> serveOrgScan(exchange)
             else -> respondJson(exchange, 404, error("not found"))
         }
+    }
+
+    // Изменения — только PUT/DELETE: с чужой страницы браузер не пошлёт их без CORS-preflight.
+    private fun serveStars(exchange: HttpExchange, method: String) {
+        if (method == "GET") return respondStars(exchange, stars.list())
+        if (method != "PUT" && method != "DELETE") {
+            return respondJson(exchange, 405, error("method not allowed"))
+        }
+        val params = parseQuery(exchange.requestURI.rawQuery)
+        val (owner, repo, path) = listOf("owner", "repo", "path").map { params[it]?.last().orEmpty() }
+        if (owner.isBlank() || repo.isBlank() || path.isBlank() || '/' in owner || '/' in repo) {
+            return respondJson(exchange, 400, error("owner, repo and path are required; owner and repo must not contain '/'"))
+        }
+        val star = Star.of(owner, repo, path)
+        val updated = try {
+            if (method == "PUT") stars.add(star) else stars.remove(star)
+        } catch (e: IOException) {
+            return respondJson(exchange, 500, error(e.message.orEmpty()))
+        }
+        respondStars(exchange, updated)
+    }
+
+    private fun respondStars(exchange: HttpExchange, body: Stars) {
+        val bytes = Json.encodeToString(Stars.serializer(), body).toByteArray(StandardCharsets.UTF_8)
+        respond(exchange, 200, "application/json; charset=utf-8", bytes)
     }
 
     private fun serveIndex(exchange: HttpExchange) {

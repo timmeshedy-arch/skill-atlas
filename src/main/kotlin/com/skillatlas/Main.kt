@@ -14,8 +14,10 @@ import com.skillatlas.github.GitHubException
 import com.skillatlas.report.ReportFormat
 import com.skillatlas.report.ReportFormatter
 import com.skillatlas.scan.Scanner
+import com.skillatlas.web.StarStore
 import com.skillatlas.web.WebServer
 import java.io.File
+import java.nio.file.Path
 import kotlin.system.exitProcess
 
 const val EXIT_OK = 0
@@ -143,8 +145,17 @@ class ServeCommand : CliktCommand(
     private val token by option("--token", help = "GitHub token (defaults to the GITHUB_TOKEN env var)")
         .default("")
 
+    private val starsFile by option("--stars-file", help = "JSON file with starred artifacts (defaults to ~/.skill-atlas/stars.json)")
+        .default(Path.of(System.getProperty("user.home"), ".skill-atlas", "stars.json").toString())
+
     override fun run() {
-        val server = WebServer(port = port, token = token.ifBlank { System.getenv("GITHUB_TOKEN") })
+        val stars = try {
+            StarStore(Path.of(starsFile))
+        } catch (e: IllegalArgumentException) {
+            echo("skill-atlas: ${e.message}", err = true)
+            exitProcess(EXIT_ARG_ERROR)
+        }
+        val server = WebServer(port = port, token = token.ifBlank { System.getenv("GITHUB_TOKEN") }, stars = stars)
         server.start()
         echo("skill-atlas UI: http://127.0.0.1:${server.port}")
         Thread.currentThread().join()

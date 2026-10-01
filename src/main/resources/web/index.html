@@ -19,6 +19,7 @@
     --bad-bg: #ffe2dd;  --bad-fg: #5d1715;
     --warn-bg: #fdecc8; --warn-fg: #402c1b;
     --code-bg: rgba(135, 131, 120, .15);
+    --star: #e0a800;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -64,7 +65,8 @@
   input::placeholder { color: var(--faint); }
   input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(35, 131, 226, .15); }
   #org { flex: 1 1 320px; min-width: 0; }
-  #filter { display: block; width: 100%; margin-top: 24px; }
+  .filters { display: flex; gap: 8px; margin-top: 24px; }
+  .filters input { flex: 1 1 auto; min-width: 0; }
   button {
     font: inherit;
     font-weight: 500;
@@ -80,6 +82,7 @@
   button:disabled { opacity: .6; cursor: default; }
   button.secondary { color: var(--text); background: var(--hover); border: 1px solid var(--border); }
   button.secondary:hover { background: var(--border); }
+  button.secondary[aria-pressed="true"] { color: var(--star); border-color: var(--star); }
 
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .chip {
@@ -145,6 +148,13 @@
   .row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
   .name { font-weight: 600; }
   .name.missing { color: var(--faint); font-weight: 400; font-style: italic; }
+  button.star {
+    color: var(--faint); background: none;
+    padding: 0; font-size: 16px; line-height: 1;
+    align-self: center;
+  }
+  button.star:hover { color: var(--text); background: none; }
+  button.star.on, button.star.on:hover { color: var(--star); }
   .tag {
     font-size: 12px;
     padding: 0 6px;
@@ -202,7 +212,10 @@
   <div id="hint" class="hint"></div>
 
   <div id="status" class="callout" hidden></div>
-  <input id="filter" type="search" placeholder="Filter by name" aria-label="Filter by name" autocomplete="off" hidden>
+  <div id="filters" class="filters" hidden>
+    <input id="filter" type="search" placeholder="Filter by name" aria-label="Filter by name" autocomplete="off">
+    <button id="starred" type="button" class="secondary" aria-pressed="false" title="Show only starred">★ Starred</button>
+  </div>
   <section id="result" hidden></section>
 </main>
 
@@ -211,8 +224,11 @@
   const form = $("form"), orgInput = $("org"), addButton = $("add");
   const button = $("scan"), statusBox = $("status"), result = $("result");
   const filterInput = $("filter"), chipsBox = $("chips"), hint = $("hint");
+  const filtersBox = $("filters"), starredButton = $("starred");
   const MAX_ORGS = 5, PAGE_SIZE = 100;
   let orgs = [], scanning = false, lastData = null, groupsBox = null;
+  // Stars live on the server (/api/stars); keys are starKey() of the starred artifacts.
+  let stars = new Set(), starredOnly = false;
 
   const GROUPS = [
     { type: "SKILL", title: "Skills" },
@@ -273,6 +289,47 @@
   }
 
   const artifactKey = (x) => `${x.owner}/${x.repo}/${x.path}`;
+  // GitHub owner/repo are case-insensitive, the path is not (same rule as the server).
+  const starKey = (x) => `${x.owner}/${x.repo}`.toLowerCase() + "/" + x.path;
+
+  function setStars(body) { stars = new Set(body.stars.map(starKey)); }
+
+  async function loadStars() {
+    try {
+      const res = await fetch("api/stars");
+      if (res.ok) setStars(await res.json());
+    } catch {}
+    if (lastData) renderGroups();
+  }
+
+  function paintStar(btn, a) {
+    const on = stars.has(starKey(a));
+    const what = a.name || a.path;
+    btn.classList.toggle("on", on);
+    btn.textContent = on ? "★" : "☆";
+    btn.title = on ? "Unstar" : "Star";
+    btn.setAttribute("aria-label", `${on ? "Unstar" : "Star"} ${what}`);
+    btn.setAttribute("aria-pressed", String(on));
+  }
+
+  // Optimistic: the star flips at once and is rolled back if the server rejects the change.
+  async function toggleStar(a, btn) {
+    const key = starKey(a), on = !stars.has(key);
+    const refresh = () => (starredOnly ? renderGroups() : paintStar(btn, a));
+    if (on) stars.add(key); else stars.delete(key);
+    refresh();
+    try {
+      const params = new URLSearchParams({ owner: a.owner, repo: a.repo, path: a.path });
+      const res = await fetch("api/stars?" + params, { method: on ? "PUT" : "DELETE" });
+      const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      setStars(body);
+    } catch (e) {
+      if (on) stars.delete(key); else stars.add(key);
+      showStatus("error", "⛔", el("span", { textContent: `Could not ${on ? "star" : "unstar"} ${a.name || a.path}: ${e.message}` }));
+    }
+    refresh();
+  }
 
   function renderArtifact(a) {
     const name = a.name
@@ -281,8 +338,11 @@
     const tag = a.valid
       ? el("span", { className: "tag ok", textContent: "valid" })
       : el("span", { className: "tag bad", textContent: a.error || "invalid" });
+    const star = el("button", { type: "button", className: "star" });
+    star.onclick = () => toggleStar(a, star);
+    paintStar(star, a);
     return el("li", {},
-      el("div", { className: "row" }, name, tag, el("span", { className: "repo-label", textContent: `${a.owner}/${a.repo}` })),
+      el("div", { className: "row" }, star, name, tag, el("span", { className: "repo-label", textContent: `${a.owner}/${a.repo}` })),
       a.description ? el("p", {
         className: "desc",
         textContent: a.description,
@@ -301,25 +361,36 @@
     return name.toLowerCase().includes(q.replace(/^\//, "").toLowerCase());
   }
 
+  function emptyText(g, all, q) {
+    if (!all.length) return `No ${g.title.toLowerCase()} found.`;
+    return starredOnly && !q ? "No starred items." : "No matches.";
+  }
+
   function renderGroups() {
     const q = filterInput.value.trim();
     const nodes = [];
     for (const g of GROUPS) {
       const all = lastData.artifacts.filter((a) => a.type === g.type);
-      const items = all.filter((a) => matches(a, q));
-      const count = q ? `${items.length} / ${all.length}` : all.length;
+      const items = all.filter((a) => matches(a, q) && (!starredOnly || stars.has(starKey(a))));
+      const count = q || starredOnly ? `${items.length} / ${all.length}` : all.length;
       nodes.push(el("h2", {}, g.title, el("span", { className: "count", textContent: count })));
       nodes.push(items.length
         ? el("ul", {}, ...items.map(renderArtifact))
-        : el("div", { className: "empty", textContent: all.length ? "No matches." : `No ${g.title.toLowerCase()} found.` }));
+        : el("div", { className: "empty", textContent: emptyText(g, all, q) }));
     }
     groupsBox.replaceChildren(...nodes);
+  }
+
+  function setStarredOnly(on) {
+    starredOnly = on;
+    starredButton.setAttribute("aria-pressed", String(on));
   }
 
   function syncFilterToUrl() {
     const params = new URLSearchParams(location.search);
     const q = filterInput.value.trim();
     if (q) params.set("q", q); else params.delete("q");
+    if (starredOnly) params.set("starred", "1"); else params.delete("starred");
     history.replaceState(null, "", "?" + params);
   }
 
@@ -378,7 +449,7 @@
 
     result.replaceChildren(...nodes);
     result.hidden = false;
-    filterInput.hidden = false;
+    filtersBox.hidden = false;
 
     const warnings = [];
     const bigOrgs = data.orgs.filter((o) => o.truncated).map((o) => o.org);
@@ -438,10 +509,17 @@
     syncFilterToUrl();
     if (lastData) renderGroups();
   });
+  starredButton.addEventListener("click", () => {
+    setStarredOnly(!starredOnly);
+    syncFilterToUrl();
+    if (lastData) renderGroups();
+  });
 
-  // Prefill from ?org=a&org=b&q= (shareable link) or the last scan.
+  // Prefill from ?org=a&org=b&q=&starred=1 (shareable link) or the last scan.
   const qs = new URLSearchParams(location.search);
   filterInput.value = qs.get("q") || "";
+  setStarredOnly(qs.get("starred") === "1");
+  loadStars();
   if (qs.getAll("org").length) {
     qs.getAll("org").forEach(addOrg);
     if (orgs.length) scan();
