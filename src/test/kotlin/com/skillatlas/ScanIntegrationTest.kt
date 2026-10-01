@@ -492,6 +492,17 @@ class ScanIntegrationTest {
         assertEquals(EXIT_OK, code)
         assertContains(out, "@ develop")
         assertTrue(gh.requests.any { it.path == "repos/$OWNER/$REPO/git/trees/develop" })
+        assertTrue(gh.requests.none { it.path == "repos/$OWNER/$REPO" }, "default_branch is not needed with --ref")
+    }
+
+    @Test
+    fun `empty repository is not found`() {
+        gh.treeFails(OWNER, REPO, "develop", status = 409)
+
+        val code = app().run("$OWNER/$REPO", ref = "develop")
+
+        assertEquals(EXIT_NOT_FOUND, code)
+        assertContains(err, "not found")
     }
 
     private companion object {

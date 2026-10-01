@@ -135,7 +135,7 @@ class ScanCommand : CliktCommand(
 
 class ServeCommand : CliktCommand(
     name = "serve",
-    help = "Start a local web UI for scanning repositories",
+    help = "Start a local web UI for scanning GitHub organizations",
 ) {
 
     private val port by option("--port", help = "Port to listen on (127.0.0.1 only)").int().default(8080)

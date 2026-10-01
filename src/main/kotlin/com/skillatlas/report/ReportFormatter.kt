@@ -2,7 +2,7 @@ package com.skillatlas.report
 
 import com.skillatlas.scan.Artifact
 import com.skillatlas.scan.ArtifactType
-import com.skillatlas.scan.MultiScanResult
+import com.skillatlas.scan.OrgScanResult
 import com.skillatlas.scan.ScanResult
 import com.skillatlas.scan.SimilarGroup
 import kotlinx.serialization.json.Json
@@ -128,8 +128,16 @@ object ReportFormatter {
         }
     }
 
-    /** Ответ `/api/multi-scan`: структура описана в README. */
-    fun toJson(result: MultiScanResult): JsonObject = buildJsonObject {
+    /** Ответ `/api/org-scan`: структура описана в README. */
+    fun toJson(result: OrgScanResult): JsonObject = buildJsonObject {
+        put("orgs", JsonArray(result.orgs.map { org ->
+            buildJsonObject {
+                put("org", org.org)
+                put("repos", org.repoCount)
+                put("truncated", org.truncated)
+                put("error", org.error)
+            }
+        }))
         put("repos", JsonArray(result.repos.map { scan ->
             buildJsonObject {
                 put("owner", scan.owner)

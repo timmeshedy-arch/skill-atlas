@@ -1,10 +1,12 @@
 package com.skillatlas
 
+import com.skillatlas.StubGitHub.ListedRepo
 import com.skillatlas.web.WebServer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -61,8 +63,8 @@ class WebServerIntegrationTest {
         return get("/api/scan?$query", server)
     }
 
-    private fun multiScan(vararg repos: String): HttpResponse<String> =
-        get("/api/multi-scan?" + repos.joinToString("&") { "repo=" + URLEncoder.encode(it, StandardCharsets.UTF_8) })
+    private fun orgScan(vararg orgs: String): HttpResponse<String> =
+        get("/api/org-scan?" + orgs.joinToString("&") { "org=" + URLEncoder.encode(it, StandardCharsets.UTF_8) })
 
     private fun json(response: HttpResponse<String>): JsonObject = Json.parseToJsonElement(response.body()).jsonObject
 
@@ -74,10 +76,9 @@ class WebServerIntegrationTest {
         gh.file(OWNER, REPO, branch, SKILL_ALPHA, "---\nname: alpha\ndescription: Does alpha things.\n---\n")
     }
 
-    private fun givenSkill(repo: String, name: String, description: String, branch: String = MAIN) {
-        gh.repo(OWNER, repo, branch)
-        gh.tree(OWNER, repo, branch, blobs = listOf(SKILL_ALPHA))
-        gh.file(OWNER, repo, branch, SKILL_ALPHA, "---\nname: $name\ndescription: $description\n---\n")
+    private fun givenSkill(repo: String, name: String, description: String, branch: String = MAIN, owner: String = ORG) {
+        gh.tree(owner, repo, branch, blobs = listOf(SKILL_ALPHA))
+        gh.file(owner, repo, branch, SKILL_ALPHA, "---\nname: $name\ndescription: $description\n---\n")
     }
 
     @Test
@@ -101,85 +102,195 @@ class WebServerIntegrationTest {
     }
 
     @Test
-    fun `web UI scans several repos without a ref input`() {
+    fun `web UI scans organizations without a ref input`() {
         val body = get("/").body()
 
         assertFalse(body.contains("""id="ref""""))
+        assertFalse(body.contains("api/multi-scan"))
+        assertContains(body, """<input id="org"""")
         assertContains(body, """<button id="add"""")
-        assertContains(body, "api/multi-scan")
-        assertContains(body, """qs.getAll("repo")""")
+        assertContains(body, "api/org-scan")
+        assertContains(body, """qs.getAll("org")""")
     }
 
     @Test
-    fun `multi-scan merges artifacts of all repos`() {
+    fun `org-scan scans every repo of the org by its default branch`() {
+        gh.ownerRepos(ORG, listOf(ListedRepo(REPO), ListedRepo(OTHER, defaultBranch = "trunk")))
         givenSkill(REPO, "alpha", "Does alpha things.")
         givenSkill(OTHER, "beta", "Builds beta widgets.", branch = "trunk")
 
-        val response = multiScan("$OWNER/$REPO", "https://github.com/$OWNER/$OTHER")
+        val response = orgScan(ORG)
 
         assertEquals(200, response.statusCode())
         val body = json(response)
+        val org = body["orgs"]!!.jsonArray.single().jsonObject
+        assertEquals(ORG, org.str("org"))
+        assertEquals(2, org["repos"]!!.jsonPrimitive.int)
+        assertFalse(org["truncated"]!!.jsonPrimitive.boolean)
+        assertEquals(JsonNull, org["error"])
         val repos = body["repos"]!!.jsonArray.map { it.jsonObject }
         assertEquals(listOf(REPO, OTHER), repos.map { it.str("repo") })
         assertEquals(listOf(MAIN, "trunk"), repos.map { it.str("ref") })
         assertTrue(repos.all { it.str("sha") == StubGitHub.SHA && it["error"] == JsonNull })
         val artifacts = body["artifacts"]!!.jsonArray.map { it.jsonObject }
         assertEquals(
-            listOf("$OWNER/$REPO:alpha", "$OWNER/$OTHER:beta"),
+            listOf("$ORG/$REPO:alpha", "$ORG/$OTHER:beta"),
             artifacts.map { "${it.str("owner")}/${it.str("repo")}:${it.str("name")}" },
         )
         assertEquals(0, body["similar"]!!.jsonArray.size)
     }
 
     @Test
-    fun `same skill in two repos is valid and similar across repos`() {
+    fun `org listing is one page of the most recently pushed repos, default branch is not refetched`() {
+        gh.ownerRepos(ORG, listOf(ListedRepo(REPO)))
         givenSkill(REPO, "alpha", "Does alpha things.")
-        givenSkill(OTHER, "alpha", "Does alpha things.")
 
-        val body = json(multiScan("$OWNER/$REPO", "$OWNER/$OTHER"))
+        orgScan(ORG)
 
-        assertTrue(body["artifacts"]!!.jsonArray.all { it.jsonObject["valid"]!!.jsonPrimitive.boolean })
-        val group = body["similar"]!!.jsonArray.single().jsonObject
-        assertEquals(1.0, group.str("score").toDouble())
-        assertEquals(
-            listOf("$OWNER/$OTHER/$SKILL_ALPHA", "$OWNER/$REPO/$SKILL_ALPHA"),
-            group["members"]!!.jsonArray.map { it.jsonObject }.map { "${it.str("owner")}/${it.str("repo")}/${it.str("path")}" },
-        )
+        val listing = gh.requests.single { it.path == "orgs/$ORG/repos" }
+        assertEquals(setOf("per_page=100", "sort=pushed"), listing.query!!.split("&").toSet())
+        assertTrue(gh.requests.none { it.path == "repos/$ORG/$REPO" })
     }
 
     @Test
-    fun `failing repo is reported per repo and does not break the others`() {
+    fun `forks and archived repos are skipped`() {
+        gh.ownerRepos(
+            ORG,
+            listOf(ListedRepo(REPO), ListedRepo("forked", fork = true), ListedRepo("old", archived = true)),
+        )
         givenSkill(REPO, "alpha", "Does alpha things.")
 
-        val response = multiScan("$OWNER/$OTHER", "$OWNER/$REPO")
+        val body = json(orgScan(ORG))
+
+        assertEquals(1, body["orgs"]!!.jsonArray.single().jsonObject["repos"]!!.jsonPrimitive.int)
+        assertEquals(listOf(REPO), body["repos"]!!.jsonArray.map { it.jsonObject.str("repo") })
+        assertTrue(gh.requests.none { "forked" in it.path || "old" in it.path })
+    }
+
+    @Test
+    fun `user account is scanned when there is no such organization`() {
+        gh.ownerRepos(ORG, listOf(ListedRepo(REPO)), user = true)
+        givenSkill(REPO, "alpha", "Does alpha things.")
+
+        val body = json(orgScan(ORG))
+
+        assertEquals(JsonNull, body["orgs"]!!.jsonArray.single().jsonObject["error"])
+        assertEquals("alpha", body["artifacts"]!!.jsonArray.single().jsonObject.str("name"))
+        assertEquals(listOf("orgs/$ORG/repos", "users/$ORG/repos"), gh.requests.map { it.path }.take(2))
+    }
+
+    @Test
+    fun `repo owner is the canonical login from GitHub`() {
+        gh.ownerRepos(ORG.uppercase(), listOf(ListedRepo(REPO)), login = ORG)
+        givenSkill(REPO, "alpha", "Does alpha things.")
+
+        val artifact = json(orgScan(ORG.uppercase()))["artifacts"]!!.jsonArray.single().jsonObject
+
+        assertEquals(ORG, artifact.str("owner"))
+        assertEquals("https://github.com/$ORG/$REPO/blob/${StubGitHub.SHA}/$SKILL_ALPHA", artifact.str("url"))
+    }
+
+    @Test
+    fun `org with more repos than one page is marked truncated`() {
+        gh.ownerRepos(ORG, listOf(ListedRepo(REPO)), hasMore = true)
+        givenSkill(REPO, "alpha", "Does alpha things.")
+
+        val org = json(orgScan(ORG))["orgs"]!!.jsonArray.single().jsonObject
+
+        assertTrue(org["truncated"]!!.jsonPrimitive.boolean)
+        assertEquals(1, org["repos"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun `unknown org is reported per org and does not break the others`() {
+        gh.ownerRepos(ORG, listOf(ListedRepo(REPO)))
+        givenSkill(REPO, "alpha", "Does alpha things.")
+
+        val response = orgScan("ghost", ORG)
 
         assertEquals(200, response.statusCode())
         val body = json(response)
-        val (failed, ok) = body["repos"]!!.jsonArray.map { it.jsonObject }
-        assertEquals("repository not found", failed.str("error"))
-        assertEquals(JsonNull, failed["sha"])
+        val (failed, ok) = body["orgs"]!!.jsonArray.map { it.jsonObject }
+        assertEquals("organization not found", failed.str("error"))
+        assertEquals(0, failed["repos"]!!.jsonPrimitive.int)
         assertEquals(JsonNull, ok["error"])
         assertEquals(REPO, body["artifacts"]!!.jsonArray.single().jsonObject.str("repo"))
     }
 
     @Test
-    fun `duplicate repos are scanned once`() {
-        givenSkill(REPO, "alpha", "Does alpha things.")
+    fun `rate limit on org listing is reported per org`() {
+        gh.ownerReposFail(ORG, 403, headers = mapOf("x-ratelimit-remaining" to "0"))
 
-        val body = json(multiScan("$OWNER/$REPO", "https://github.com/${OWNER.uppercase()}/$REPO.git"))
+        val response = orgScan(ORG)
 
-        assertEquals(1, body["repos"]!!.jsonArray.size)
-        assertEquals(1, gh.requests.count { it.path == "repos/$OWNER/$REPO" })
+        assertEquals(200, response.statusCode())
+        assertContains(json(response)["orgs"]!!.jsonArray.single().jsonObject.str("error"), "rate limit")
     }
 
     @Test
-    fun `multi-scan rejects no repos, too many repos and unparsable repos`() {
-        assertEquals(400, get("/api/multi-scan").statusCode())
-        assertEquals(400, multiScan(*Array(11) { "$OWNER/r$it" }).statusCode())
-        val unparsable = multiScan("$OWNER/$REPO", "foo")
-        assertEquals(400, unparsable.statusCode())
-        assertContains(json(unparsable).str("error"), "'foo'")
+    fun `failing and empty repos are reported per repo and do not break the others`() {
+        gh.ownerRepos(ORG, listOf(ListedRepo("empty"), ListedRepo("broken"), ListedRepo(REPO)))
+        gh.treeFails(ORG, "empty", MAIN, status = 409)
+        gh.treeFails(ORG, "broken", MAIN, status = 500)
+        givenSkill(REPO, "alpha", "Does alpha things.")
+
+        val response = orgScan(ORG)
+
+        assertEquals(200, response.statusCode())
+        val body = json(response)
+        val (empty, broken, ok) = body["repos"]!!.jsonArray.map { it.jsonObject }
+        assertEquals("repository is empty", empty.str("error"))
+        assertEquals(JsonNull, empty["sha"])
+        assertContains(broken.str("error"), "network error")
+        assertEquals(JsonNull, ok["error"])
+        assertEquals(REPO, body["artifacts"]!!.jsonArray.single().jsonObject.str("repo"))
+    }
+
+    @Test
+    fun `same skill in two orgs is valid and similar across orgs`() {
+        gh.ownerRepos(ORG, listOf(ListedRepo(REPO)))
+        gh.ownerRepos(OTHER_ORG, listOf(ListedRepo(REPO)))
+        givenSkill(REPO, "alpha", "Does alpha things.")
+        givenSkill(REPO, "alpha", "Does alpha things.", owner = OTHER_ORG)
+
+        val body = json(orgScan(ORG, OTHER_ORG))
+
+        assertTrue(body["artifacts"]!!.jsonArray.all { it.jsonObject["valid"]!!.jsonPrimitive.boolean })
+        val group = body["similar"]!!.jsonArray.single().jsonObject
+        assertEquals(1.0, group.str("score").toDouble())
+        assertEquals(
+            listOf("$ORG/$REPO/$SKILL_ALPHA", "$OTHER_ORG/$REPO/$SKILL_ALPHA"),
+            group["members"]!!.jsonArray.map { it.jsonObject }.map { "${it.str("owner")}/${it.str("repo")}/${it.str("path")}" },
+        )
+    }
+
+    @Test
+    fun `duplicate orgs in any accepted form are scanned once`() {
+        gh.ownerRepos(ORG, listOf(ListedRepo(REPO)))
+        givenSkill(REPO, "alpha", "Does alpha things.")
+
+        val body = json(orgScan(ORG, "https://github.com/${ORG.uppercase()}/", "@$ORG"))
+
+        assertEquals(1, body["orgs"]!!.jsonArray.size)
+        assertEquals(1, gh.requests.count { it.path == "orgs/$ORG/repos" })
+        assertEquals(1, body["repos"]!!.jsonArray.size)
+    }
+
+    @Test
+    fun `org-scan rejects no orgs, too many orgs and unparsable orgs`() {
+        assertEquals(400, get("/api/org-scan").statusCode())
+        assertEquals(400, orgScan(*Array(6) { "org$it" }).statusCode())
+        for (bad in listOf("$ORG/$REPO", "https://github.com/$ORG/$REPO", "-bad", "a".repeat(40), "")) {
+            val response = orgScan(ORG, bad)
+            assertEquals(400, response.statusCode(), "'$bad'")
+            assertContains(json(response).str("error"), "'$bad'")
+        }
         assertTrue(gh.requests.isEmpty())
+    }
+
+    @Test
+    fun `repo list endpoint is gone`() {
+        assertEquals(404, get("/api/multi-scan?repo=$ORG/$REPO").statusCode())
     }
 
     @Test
@@ -275,6 +386,8 @@ class WebServerIntegrationTest {
         const val OWNER = "owner"
         const val REPO = "repo"
         const val OTHER = "other"
+        const val ORG = "acme"
+        const val OTHER_ORG = "globex"
         const val MAIN = "main"
         const val SKILL_ALPHA = ".claude/skills/alpha/SKILL.md"
         const val SECRET = "ghp_supersecret"

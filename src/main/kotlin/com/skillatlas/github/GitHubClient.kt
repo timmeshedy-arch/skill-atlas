@@ -1,5 +1,6 @@
 package com.skillatlas.github
 
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.net.URI
 import java.net.http.HttpClient
@@ -8,13 +9,19 @@ import java.net.http.HttpResponse
 import java.time.Duration
 
 sealed class GitHubException(message: String) : Exception(message) {
-    class NotFound(message: String) : GitHubException(message)
+    open class NotFound(message: String) : GitHubException(message)
+
+    /** `409` на дерево: у репозитория нет ни одного коммита. */
+    class EmptyRepository(message: String) : NotFound(message)
     class RateLimited(message: String) : GitHubException(message)
     class Network(message: String, cause: Throwable? = null) : GitHubException(message)
 }
 
 const val DEFAULT_API_BASE = "https://api.github.com"
 const val DEFAULT_RAW_BASE = "https://raw.githubusercontent.com"
+
+/** Максимум на страницу у GitHub; листинг репозиториев владельца берёт одну такую страницу. */
+const val OWNER_REPOS_PAGE_SIZE = 100
 
 class GitHubClient(
     private val token: String?,
@@ -49,6 +56,7 @@ class GitHubClient(
         }
         when (response.statusCode()) {
             404 -> throw GitHubException.NotFound("Not found: $uri")
+            409 -> throw GitHubException.EmptyRepository("Empty repository: $uri")
             403, 429 -> throw GitHubException.RateLimited(
                 "GitHub API rate limit exceeded or authentication required for: $uri " +
                     "(pass --token or set GITHUB_TOKEN)"
@@ -68,6 +76,22 @@ class GitHubClient(
     fun getTree(owner: String, repo: String, ref: String): TreeResponse {
         val response = send("$apiBase/repos/$owner/$repo/git/trees/$ref?recursive=1")
         return json.decodeFromString(TreeResponse.serializer(), response.body())
+    }
+
+    /**
+     * Первая страница репозиториев организации, самые недавно обновлённые первыми.
+     * Если организации с таким именем нет — репозитории пользователя (`/users/{owner}/repos`).
+     */
+    fun listOwnerRepos(owner: String): OwnerRepos {
+        val query = "per_page=$OWNER_REPOS_PAGE_SIZE&sort=pushed"
+        val response = try {
+            send("$apiBase/orgs/$owner/repos?$query")
+        } catch (e: GitHubException.NotFound) {
+            send("$apiBase/users/$owner/repos?$query")
+        }
+        val repos = json.decodeFromString(ListSerializer(OwnerRepo.serializer()), response.body())
+        val hasMore = response.headers().allValues("Link").any { it.contains("rel=\"next\"") }
+        return OwnerRepos(repos, hasMore)
     }
 
     fun getRawFile(owner: String, repo: String, ref: String, path: String): String {

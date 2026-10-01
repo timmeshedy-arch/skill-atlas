@@ -136,6 +136,47 @@ class StubGitHub : AutoCloseable {
         stub("repos/$owner/$repo/git/trees/$ref", Stubbed(body = body))
     }
 
+    /** Репозиторий в ответе листинга `/orgs/{org}/repos`. */
+    data class ListedRepo(
+        val name: String,
+        val defaultBranch: String = "main",
+        val fork: Boolean = false,
+        val archived: Boolean = false,
+    )
+
+    /**
+     * Листинг репозиториев владельца: `orgs/<owner>/repos`, а при [user] — `users/<owner>/repos`
+     * (для организации с таким именем стаба нет → 404, как у GitHub для пользователя).
+     * [hasMore] добавляет `Link: rel="next"` — у владельца есть следующая страница.
+     */
+    fun ownerRepos(
+        owner: String,
+        repos: List<ListedRepo>,
+        hasMore: Boolean = false,
+        user: Boolean = false,
+        login: String = owner,
+    ) {
+        val body = JsonArray(repos.map { r ->
+            buildJsonObject {
+                put("name", r.name)
+                put("owner", buildJsonObject { put("login", login) })
+                put("default_branch", r.defaultBranch)
+                put("fork", r.fork)
+                put("archived", r.archived)
+            }
+        }).toString()
+        val headers = if (hasMore) {
+            mapOf("Link" to """<$apiBase/orgs/$owner/repos?page=2>; rel="next", <$apiBase/orgs/$owner/repos?page=3>; rel="last"""")
+        } else {
+            emptyMap()
+        }
+        stub("${if (user) "users" else "orgs"}/$owner/repos", Stubbed(body = body, headers = headers))
+    }
+
+    fun ownerReposFail(owner: String, status: Int, headers: Map<String, String> = emptyMap()) {
+        stub("orgs/$owner/repos", Stubbed(status = status, body = """{"message":"stub $status"}""", headers = headers))
+    }
+
     fun treeFails(owner: String, repo: String, ref: String, status: Int) {
         stub("repos/$owner/$repo/git/trees/$ref", Stubbed(status = status, body = """{"message":"stub $status"}"""))
     }
