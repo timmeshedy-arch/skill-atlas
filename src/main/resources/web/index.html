@@ -20,6 +20,7 @@
     --warn-bg: #fdecc8; --warn-fg: #402c1b;
     --code-bg: rgba(135, 131, 120, .15);
     --star: #e0a800;
+    --selected: rgba(35, 131, 226, .1);
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -145,6 +146,10 @@
   li:hover { background: var(--hover); }
   li + li { border-top: 1px solid var(--border); }
   li:hover + li, li:hover { border-top-color: transparent; }
+  li.item { cursor: pointer; }
+  li.item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  li.item.selected { background: var(--selected); }
+  li.item.selected + li, li.item.selected { border-top-color: transparent; }
   .row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
   .name { font-weight: 600; }
   .name.missing { color: var(--faint); font-weight: 400; font-style: italic; }
@@ -164,15 +169,6 @@
   .tag.ok { background: var(--ok-bg); color: var(--ok-fg); }
   .tag.bad { background: var(--bad-bg); color: var(--bad-fg); }
   .tag.warn { background: var(--warn-bg); color: var(--warn-fg); }
-  .desc {
-    margin: 2px 0 0;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
-    overflow: hidden;
-    cursor: pointer;
-  }
-  .desc.open { -webkit-line-clamp: unset; }
   .path {
     display: inline-block;
     margin-top: 4px;
@@ -185,6 +181,35 @@
   .empty { color: var(--faint); padding: 8px 0; font-size: 14px; }
   .similar .member { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
   .similar .member .path { margin-top: 0; }
+  button.link { color: inherit; background: none; padding: 0; text-align: left; }
+  button.link:hover { background: none; text-decoration: underline; }
+
+  /* Details of the clicked artifact, docked to the right edge. */
+  .panel {
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: min(420px, 100vw);
+    overflow-y: auto;
+    padding: 20px 24px 48px;
+    background: var(--bg);
+    border-left: 1px solid var(--border);
+    box-shadow: -8px 0 24px rgba(15, 15, 15, .08);
+  }
+  .panel-top { display: flex; align-items: center; justify-content: space-between; }
+  .panel .kind { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  button.close { color: var(--muted); background: none; padding: 0 4px; font-size: 22px; line-height: 1; }
+  button.close:hover { color: var(--text); background: none; }
+  .panel .title { margin: 8px 0 6px; font-size: 22px; overflow-wrap: anywhere; }
+  .panel .title button.star { font-size: 20px; }
+  .panel .field { margin-top: 20px; }
+  .panel .label { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+  .panel .text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .panel .none { color: var(--faint); font-style: italic; }
+  .panel .field a { color: inherit; }
+  .panel .path { margin-top: 0; }
+  /* Wide enough for both: the page moves left instead of hiding under the panel. */
+  @media (min-width: 1240px) {
+    body.panel-open main { margin-left: max(16px, calc((100vw - 420px - 760px) / 2)); }
+  }
 
   .spinner {
     width: 14px; height: 14px;
@@ -218,17 +243,20 @@
   </div>
   <section id="result" hidden></section>
 </main>
+<aside id="panel" class="panel" aria-label="Details" hidden></aside>
 
 <script>
   const $ = (id) => document.getElementById(id);
   const form = $("form"), orgInput = $("org"), addButton = $("add");
   const button = $("scan"), statusBox = $("status"), result = $("result");
   const filterInput = $("filter"), chipsBox = $("chips"), hint = $("hint");
-  const filtersBox = $("filters"), starredButton = $("starred");
+  const filtersBox = $("filters"), starredButton = $("starred"), panel = $("panel");
   const MAX_ORGS = 5, PAGE_SIZE = 100;
   let orgs = [], scanning = false, lastData = null, groupsBox = null;
   // Stars live on the server (/api/stars); keys are starKey() of the starred artifacts.
   let stars = new Set(), starredOnly = false;
+  // Artifact shown in the side panel, or null.
+  let selected = null;
 
   const GROUPS = [
     { type: "SKILL", title: "Skills" },
@@ -300,6 +328,7 @@
       if (res.ok) setStars(await res.json());
     } catch {}
     if (lastData) renderGroups();
+    renderPanel();
   }
 
   function paintStar(btn, a) {
@@ -312,10 +341,22 @@
     btn.setAttribute("aria-pressed", String(on));
   }
 
+  // Every star on the page, so the list and the panel stay in sync.
+  function paintStars() {
+    document.querySelectorAll("button.star").forEach((b) => paintStar(b, b.artifact));
+  }
+
+  function starButton(a) {
+    const btn = el("button", { type: "button", className: "star", artifact: a });
+    btn.onclick = () => toggleStar(a);
+    paintStar(btn, a);
+    return btn;
+  }
+
   // Optimistic: the star flips at once and is rolled back if the server rejects the change.
-  async function toggleStar(a, btn) {
+  async function toggleStar(a) {
     const key = starKey(a), on = !stars.has(key);
-    const refresh = () => (starredOnly ? renderGroups() : paintStar(btn, a));
+    const refresh = () => { if (starredOnly) renderGroups(); paintStars(); };
     if (on) stars.add(key); else stars.delete(key);
     refresh();
     try {
@@ -331,25 +372,62 @@
     refresh();
   }
 
-  function renderArtifact(a) {
-    const name = a.name
+  function nameOf(a) {
+    return a.name
       ? el("span", { className: "name", textContent: a.name })
       : el("span", { className: "name missing", textContent: "unnamed" });
-    const tag = a.valid
+  }
+
+  function statusOf(a) {
+    return a.valid
       ? el("span", { className: "tag ok", textContent: "valid" })
       : el("span", { className: "tag bad", textContent: a.error || "invalid" });
-    const star = el("button", { type: "button", className: "star" });
-    star.onclick = () => toggleStar(a, star);
-    paintStar(star, a);
-    return el("li", {},
-      el("div", { className: "row" }, star, name, tag, el("span", { className: "repo-label", textContent: `${a.owner}/${a.repo}` })),
-      a.description ? el("p", {
-        className: "desc",
-        textContent: a.description,
-        title: "Click to expand",
-        onclick: (e) => e.currentTarget.classList.toggle("open"),
-      }) : null,
-      el("a", { className: "path", href: a.url, target: "_blank", rel: "noopener", textContent: a.path }),
+  }
+
+  // Description and permalink are not in the row: a click opens them in the side panel.
+  function renderArtifact(a) {
+    const li = el("li", { className: "item", tabIndex: 0, artifact: a },
+      el("div", { className: "row" }, starButton(a), nameOf(a), statusOf(a), el("span", { className: "repo-label", textContent: `${a.owner}/${a.repo}` })),
+    );
+    li.onclick = (e) => { if (!e.target.closest("button, a")) select(a); };
+    li.onkeydown = (e) => { if (e.key === "Enter" && e.target === li) select(a); };
+    return li;
+  }
+
+  const isSelected = (a) => selected != null && artifactKey(a) === artifactKey(selected);
+
+  // Clicking the artifact that is already open closes the panel.
+  function select(a) {
+    selected = a && !isSelected(a) ? a : null;
+    paintSelection();
+    renderPanel();
+  }
+
+  function paintSelection() {
+    document.querySelectorAll("li.item").forEach((li) => li.classList.toggle("selected", isSelected(li.artifact)));
+  }
+
+  function field(label, value) {
+    return el("div", { className: "field" }, el("div", { className: "label", textContent: label }), value);
+  }
+
+  function renderPanel() {
+    document.body.classList.toggle("panel-open", selected != null);
+    panel.hidden = selected == null;
+    if (!selected) { panel.replaceChildren(); return; }
+    const a = selected;
+    panel.replaceChildren(
+      el("div", { className: "panel-top" },
+        el("span", { className: "kind", textContent: a.type === "COMMAND" ? "Command" : "Skill" }),
+        el("button", { type: "button", className: "close", title: "Close", textContent: "×", onclick: () => select(null) }),
+      ),
+      el("div", { className: "row title" }, starButton(a), nameOf(a)),
+      el("div", { className: "row" }, statusOf(a)),
+      field("Repository", el("a", { href: `https://github.com/${a.owner}/${a.repo}`, target: "_blank", rel: "noopener", textContent: `${a.owner}/${a.repo}` })),
+      field("Description", a.description
+        ? el("p", { className: "text", textContent: a.description })
+        : el("span", { className: "none", textContent: "No description" })),
+      field("File", el("a", { className: "path", href: a.url, target: "_blank", rel: "noopener", textContent: a.path })),
     );
   }
 
@@ -379,6 +457,7 @@
         : el("div", { className: "empty", textContent: emptyText(g, all, q) }));
     }
     groupsBox.replaceChildren(...nodes);
+    paintSelection();
   }
 
   function setStarredOnly(on) {
@@ -427,6 +506,8 @@
     ];
 
     lastData = data;
+    // A rescan keeps the panel open if the artifact is still there.
+    selected = selected && data.artifacts.find(isSelected) || null;
     groupsBox = el("div");
     nodes.push(groupsBox);
     renderGroups();
@@ -439,7 +520,7 @@
         ...g.members.map((m) => {
           const a = byKey.get(artifactKey(m));
           return el("div", { className: "member" },
-            el("span", { className: "name", textContent: a.name }),
+            el("button", { type: "button", className: "name link", textContent: a.name, onclick: () => select(a) }),
             el("span", { className: "repo-label", textContent: `${m.owner}/${m.repo}` }),
             el("a", { className: "path", href: a.url, target: "_blank", rel: "noopener", textContent: m.path }),
           );
@@ -449,6 +530,7 @@
 
     result.replaceChildren(...nodes);
     result.hidden = false;
+    renderPanel();
     filtersBox.hidden = false;
 
     const warnings = [];
@@ -508,6 +590,9 @@
   filterInput.addEventListener("input", () => {
     syncFilterToUrl();
     if (lastData) renderGroups();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && selected) select(null);
   });
   starredButton.addEventListener("click", () => {
     setStarredOnly(!starredOnly);
